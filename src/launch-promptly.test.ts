@@ -742,6 +742,131 @@ describe('LaunchPromptly', () => {
     });
   });
 
+  // ── Tool call scanning ──
+
+  describe('tool call scanning', () => {
+    it('detects PII in tool call arguments in the response', async () => {
+      const pf = new LaunchPromptly({
+        apiKey: 'lp_live_test',
+        endpoint: 'http://localhost:3001',
+        flushAt: 1,
+      });
+
+      const mockResponseWithToolCalls = {
+        id: 'chatcmpl-tc1',
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: 'call_1',
+              type: 'function',
+              function: {
+                name: 'send_email',
+                arguments: JSON.stringify({
+                  to: 'john@acme.com',
+                  body: 'Call 555-123-4567',
+                }),
+              },
+            }],
+          },
+        }],
+        usage: {
+          prompt_tokens: 50,
+          completion_tokens: 30,
+          total_tokens: 80,
+        },
+      };
+
+      const client = createMockClient();
+      client.chat.completions.create.mockResolvedValue(mockResponseWithToolCalls);
+
+      const wrapped = pf.wrap(client, {
+        security: {
+          pii: { enabled: true, scanResponse: true },
+        },
+      });
+
+      await wrapped.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: 'Send an email to John' }],
+      });
+
+      // Wait for the async event capture
+      await new Promise((r) => setTimeout(r, 100));
+
+      const batchCall = fetchSpy.mock.calls.find((c) =>
+        (c[0] as string).includes('/v1/events/batch'),
+      );
+      expect(batchCall).toBeDefined();
+      const body = JSON.parse(batchCall![1]!.body as string);
+      const event = body.events[0];
+
+      // PII should be detected in tool call arguments (output)
+      expect(event.piiDetections).toBeDefined();
+      expect(event.piiDetections.outputCount).toBeGreaterThan(0);
+      expect(event.piiDetections.types).toEqual(
+        expect.arrayContaining(['email']),
+      );
+
+      pf.destroy();
+    });
+
+    it('detects PII in tool parameter descriptions (input)', async () => {
+      const pf = new LaunchPromptly({
+        apiKey: 'lp_live_test',
+        endpoint: 'http://localhost:3001',
+        flushAt: 1,
+      });
+
+      const client = createMockClient();
+      const wrapped = pf.wrap(client, {
+        security: {
+          pii: { enabled: true },
+        },
+      });
+
+      await wrapped.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: 'Look up this person' }],
+        tools: [{
+          type: 'function',
+          function: {
+            name: 'lookup',
+            description: 'Look up a person by email, e.g. john@acme.com',
+            parameters: {
+              type: 'object',
+              properties: {
+                email: {
+                  type: 'string',
+                  description: 'The email like john@acme.com',
+                },
+              },
+            },
+          },
+        }],
+      });
+
+      // Wait for async event capture
+      await new Promise((r) => setTimeout(r, 100));
+
+      const batchCall = fetchSpy.mock.calls.find((c) =>
+        (c[0] as string).includes('/v1/events/batch'),
+      );
+      expect(batchCall).toBeDefined();
+      const body = JSON.parse(batchCall![1]!.body as string);
+      const event = body.events[0];
+
+      expect(event.piiDetections).toBeDefined();
+      expect(event.piiDetections.inputCount).toBeGreaterThan(0);
+      expect(event.piiDetections.types).toEqual(
+        expect.arrayContaining(['email']),
+      );
+
+      pf.destroy();
+    });
+  });
+
   // ── shutdown() ──
 
   describe('shutdown()', () => {

@@ -22,6 +22,35 @@ export interface IngestEventPayload {
   spanName?: string;
   environmentId?: string;
   metadata?: Record<string, string>;
+
+  // Security metadata
+  piiDetections?: {
+    inputCount: number;
+    outputCount: number;
+    types: string[];
+    redactionApplied: boolean;
+    detectorUsed: 'regex' | 'ml' | 'both';
+  };
+  injectionRisk?: {
+    score: number;
+    triggered: string[];
+    action: 'allow' | 'warn' | 'block';
+    detectorUsed: 'rules' | 'ml' | 'both';
+  };
+  costGuard?: {
+    estimatedCost: number;
+    budgetRemaining: number;
+    limitTriggered?: string;
+  };
+  contentViolations?: {
+    inputViolations: Array<{ category: string; matched: string; severity: string }>;
+    outputViolations: Array<{ category: string; matched: string; severity: string }>;
+  };
+  compliance?: {
+    consentRecorded: boolean;
+    dataRegion?: string;
+    retentionDays?: number;
+  };
 }
 
 /**

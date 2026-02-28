@@ -23,6 +23,36 @@ export interface WrapOptions {
   feature?: string;
   traceId?: string;
   spanName?: string;
+  security?: SecurityOptions;
+}
+
+/** Security configuration for the wrap() pipeline. */
+export interface SecurityOptions {
+  pii?: PIISecurityOptions;
+  injection?: InjectionSecurityOptions;
+  costGuard?: import('./internal/cost-guard').CostGuardOptions;
+  contentFilter?: import('./internal/content-filter').ContentFilterOptions;
+  compliance?: import('./internal/compliance').ComplianceOptions;
+  audit?: {
+    logLevel?: 'none' | 'summary' | 'detailed';
+  };
+}
+
+export interface PIISecurityOptions {
+  enabled?: boolean;
+  redaction?: import('./internal/redaction').RedactionStrategy;
+  types?: import('./internal/pii').PIIType[];
+  scanResponse?: boolean;
+  providers?: import('./internal/pii').PIIDetectorProvider[];
+  onDetect?: (detections: import('./internal/pii').PIIDetection[]) => void;
+}
+
+export interface InjectionSecurityOptions {
+  enabled?: boolean;
+  blockThreshold?: number;
+  blockOnHighRisk?: boolean;
+  providers?: import('./internal/injection').InjectionDetectorProvider[];
+  onDetect?: (analysis: import('./internal/injection').InjectionAnalysis) => void;
 }
 
 /** Context propagated via AsyncLocalStorage through withContext() */
