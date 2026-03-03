@@ -1,7 +1,7 @@
 {
   "name": "launchpromptly",
   "version": "0.1.0",
-  "description": "LaunchPromptly Node.js SDK — manage, version, and deploy AI prompts",
+  "description": "LaunchPromptly Node.js SDK — runtime safety layer for LLM applications (PII redaction, injection detection, cost guards)",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -9,12 +9,17 @@
   },
   "keywords": [
     "launchpromptly",
-    "prompt-management",
+    "llm-security",
+    "pii-redaction",
+    "prompt-injection",
+    "cost-guard",
     "llm",
     "ai",
     "openai",
     "anthropic",
-    "prompt-versioning",
+    "gemini",
+    "content-filter",
+    "guardrails",
     "sdk"
   ],
   "main": "./dist/index.js",

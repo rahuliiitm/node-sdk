@@ -1,14 +1,18 @@
-export { LaunchPromptly, PromptNotFoundError } from './launch-promptly';
-export { interpolate, extractVariables } from './template';
+export { LaunchPromptly } from './launch-promptly';
 export type {
   LaunchPromptlyOptions,
-  PromptOptions,
   WrapOptions,
   CustomerContext,
   RequestContext,
   SecurityOptions,
   PIISecurityOptions,
   InjectionSecurityOptions,
+  StreamGuardOptions,
+  MaxResponseLength,
+  StreamViolation,
+  GuardrailEventType,
+  GuardrailEvent,
+  GuardrailEventHandlers,
 } from './types';
 
 // Security errors
@@ -16,7 +20,9 @@ export {
   PromptInjectionError,
   CostLimitError,
   ContentViolationError,
-  ComplianceError,
+  ModelPolicyError,
+  OutputSchemaError,
+  StreamAbortError,
 } from './errors';
 
 // Security modules — public API
@@ -51,13 +57,15 @@ export type {
   ContentFilterProvider,
 } from './internal/content-filter';
 
-export { checkCompliance, buildComplianceEventData } from './internal/compliance';
+export { checkModelPolicy } from './internal/model-policy';
+export type { ModelPolicyOptions, ModelPolicyViolation } from './internal/model-policy';
+
+export { validateSchema, validateOutputSchema } from './internal/schema-validator';
 export type {
-  ComplianceOptions,
-  ComplianceCheckResult,
-  ComplianceViolation,
-  ComplianceEventData,
-} from './internal/compliance';
+  JsonSchema,
+  OutputSchemaOptions,
+  SchemaValidationError as SchemaError,
+} from './internal/schema-validator';
 
 export { createSecurityStream } from './internal/streaming';
 export type {
@@ -65,6 +73,40 @@ export type {
   SecurityStreamResult,
   StreamSecurityReport,
 } from './internal/streaming';
+
+// Provider adapters
+export {
+  wrapAnthropicClient,
+  extractAnthropicMessageTexts,
+  extractAnthropicResponseText,
+  extractAnthropicToolCalls,
+  extractAnthropicStreamChunk,
+  extractContentBlockText,
+} from './providers/anthropic';
+export type {
+  AnthropicContentBlock,
+  AnthropicMessage,
+  AnthropicCreateParams,
+  AnthropicUsage,
+  AnthropicResponse,
+} from './providers/anthropic';
+
+export {
+  wrapGeminiClient,
+  extractGeminiMessageTexts,
+  extractGeminiResponseText,
+  extractGeminiFunctionCalls,
+  extractGeminiStreamChunk,
+  extractGeminiContentText,
+} from './providers/gemini';
+export type {
+  GeminiPart,
+  GeminiContent,
+  GeminiGenerateContentParams,
+  GeminiUsageMetadata,
+  GeminiCandidate,
+  GeminiResponse,
+} from './providers/gemini';
 
 // Backward-compatible alias
 export { LaunchPromptly as PlanForge } from './launch-promptly';

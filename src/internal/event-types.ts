@@ -16,8 +16,6 @@ export interface IngestEventPayload {
   fullHash?: string;
   promptPreview?: string;
   statusCode?: number;
-  managedPromptId?: string;
-  promptVersionId?: string;
   traceId?: string;
   spanName?: string;
   environmentId?: string;
@@ -46,10 +44,12 @@ export interface IngestEventPayload {
     inputViolations: Array<{ category: string; matched: string; severity: string }>;
     outputViolations: Array<{ category: string; matched: string; severity: string }>;
   };
-  compliance?: {
-    consentRecorded: boolean;
-    dataRegion?: string;
-    retentionDays?: number;
+  streamGuard?: {
+    aborted: boolean;
+    violationCount: number;
+    violationTypes: string[];
+    approximateOutputTokens: number;
+    responseLength: number;
   };
 }
 

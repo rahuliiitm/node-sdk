@@ -1,7 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventBatcher } from './batcher';
-import { PromptCache } from './prompt-cache';
-import { interpolate } from './template';
 import { calculateEventCost } from './internal/cost';
 import { fingerprintMessages } from './internal/fingerprint';
 import { detectPII, mergeDetections, type PIIDetection } from './internal/pii';
@@ -9,22 +7,27 @@ import { redactPII, deRedact, type RedactionStrategy } from './internal/redactio
 import { detectInjection, mergeInjectionAnalyses, type InjectionAnalysis } from './internal/injection';
 import { CostGuard, type BudgetViolation } from './internal/cost-guard';
 import { detectContentViolations, hasBlockingViolation, type ContentViolation } from './internal/content-filter';
-import { checkCompliance, buildComplianceEventData } from './internal/compliance';
-import { createSecurityStream } from './internal/streaming';
-import { PromptInjectionError, CostLimitError, ContentViolationError, ComplianceError } from './errors';
+import { createSecurityStream, StreamGuardEngine, extractChunkContent } from './internal/streaming';
+import type { StreamSecurityReport } from './internal/streaming';
+import { checkModelPolicy } from './internal/model-policy';
+import { validateOutputSchema } from './internal/schema-validator';
+import { PromptInjectionError, CostLimitError, ContentViolationError, ModelPolicyError, OutputSchemaError, StreamAbortError } from './errors';
+import { wrapAnthropicClient } from './providers/anthropic';
+import { wrapGeminiClient } from './providers/gemini';
 import type {
   LaunchPromptlyOptions,
-  PromptOptions,
   WrapOptions,
   RequestContext,
   SecurityOptions,
   ChatCompletionCreateParams,
   ChatCompletion,
+  GuardrailEventType,
+  GuardrailEvent,
+  GuardrailEventHandlers,
 } from './types';
 import type { IngestEventPayload } from './internal/event-types';
 
 const DEFAULT_ENDPOINT = 'https://api.launchpromptly.dev';
-const DEFAULT_PROMPT_CACHE_TTL = 60000; // 60 seconds
 
 type CreateFn = (params: ChatCompletionCreateParams) => Promise<ChatCompletion>;
 
@@ -125,13 +128,6 @@ function scanToolCallArguments(
   return detections;
 }
 
-export class PromptNotFoundError extends Error {
-  constructor(slug: string) {
-    super(`Prompt "${slug}" not found`);
-    this.name = 'PromptNotFoundError';
-  }
-}
-
 export class LaunchPromptly {
   // ── Singleton ───────────────────────────────────────────────────────────────
   private static _instance: LaunchPromptly | null = null;
@@ -171,17 +167,10 @@ export class LaunchPromptly {
 
   // ── Instance fields ─────────────────────────────────────────────────────────
   private readonly batcher: EventBatcher;
-  private readonly promptCache: PromptCache;
   private readonly apiKey: string;
   private readonly endpoint: string;
-  private readonly promptCacheTtl: number;
+  private readonly _eventHandlers: GuardrailEventHandlers;
   private _destroyed = false;
-
-  /** Maps interpolated content → { managedPromptId, promptVersionId } for event metadata injection */
-  private readonly resolvedPrompts = new Map<
-    string,
-    { managedPromptId: string; promptVersionId: string }
-  >();
 
   constructor(options: LaunchPromptlyOptions = {}) {
     const resolvedKey = options.apiKey
@@ -201,14 +190,28 @@ export class LaunchPromptly {
 
     this.apiKey = resolvedKey;
     this.endpoint = options.endpoint ?? DEFAULT_ENDPOINT;
-    this.promptCacheTtl = options.promptCacheTtl ?? DEFAULT_PROMPT_CACHE_TTL;
-    this.promptCache = new PromptCache(options.maxCacheSize);
+    this._eventHandlers = options.on ?? {};
     this.batcher = new EventBatcher(
       resolvedKey,
       this.endpoint,
       options.flushAt ?? 10,
       options.flushInterval ?? 5000,
     );
+  }
+
+  /**
+   * Emit a guardrail event. Calls the registered handler (if any) for the event type.
+   * Never throws — handler errors are silently caught.
+   * @internal
+   */
+  _emit(type: GuardrailEventType, data: Record<string, unknown>): void {
+    const handler = this._eventHandlers[type];
+    if (!handler) return;
+    try {
+      handler({ type, timestamp: Date.now(), data });
+    } catch {
+      // Event handlers must never break the pipeline
+    }
   }
 
   /**
@@ -220,7 +223,6 @@ export class LaunchPromptly {
    * @example
    * ```ts
    * await lp.withContext({ traceId: req.id, customerId: user.id }, async () => {
-   *   const prompt = await lp.prompt('greeting');
    *   await wrapped.chat.completions.create({ ... });
    * });
    * ```
@@ -234,96 +236,13 @@ export class LaunchPromptly {
     return this.als.getStore();
   }
 
-  async prompt(slug: string, options?: PromptOptions): Promise<string> {
-    const alsCtx = this.als.getStore();
-    const effectiveCustomerId = options?.customerId ?? alsCtx?.customerId;
-
-    // Check cache first
-    const cached = this.promptCache.get(slug);
-    if (cached) {
-      const content = options?.variables
-        ? interpolate(cached.content, options.variables)
-        : cached.content;
-
-      // Store interpolated content for event metadata
-      this.resolvedPrompts.set(content, {
-        managedPromptId: cached.managedPromptId,
-        promptVersionId: cached.promptVersionId,
-      });
-
-      return content;
-    }
-
-    // Fetch from API
-    const queryParams = effectiveCustomerId
-      ? `?customerId=${encodeURIComponent(effectiveCustomerId)}`
-      : '';
-    const url = `${this.endpoint}/v1/prompts/resolve/${encodeURIComponent(slug)}${queryParams}`;
-
-    try {
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-      });
-
-      if (response.status === 404) {
-        // 404 is authoritative — no stale fallback
-        throw new PromptNotFoundError(slug);
-      }
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data = (await response.json()) as {
-        content: string;
-        managedPromptId: string;
-        promptVersionId: string;
-        version: number;
-      };
-
-      // Cache the raw template (before interpolation)
-      this.promptCache.set(slug, data, this.promptCacheTtl);
-
-      // Interpolate variables if provided
-      const content = options?.variables
-        ? interpolate(data.content, options.variables)
-        : data.content;
-
-      // Store interpolated content for event metadata injection
-      this.resolvedPrompts.set(content, {
-        managedPromptId: data.managedPromptId,
-        promptVersionId: data.promptVersionId,
-      });
-
-      return content;
-    } catch (error) {
-      // On PromptNotFoundError, always throw
-      if (error instanceof PromptNotFoundError) {
-        throw error;
-      }
-
-      // On network error, try stale cache
-      const stale = this.promptCache.getStale(slug);
-      if (stale) {
-        const content = options?.variables
-          ? interpolate(stale.content, options.variables)
-          : stale.content;
-        return content;
-      }
-
-      throw error;
-    }
-  }
-
   wrap<T extends object>(client: T, options: WrapOptions = {}): T {
     const batcher = this.batcher;
+    const emit = this._emit.bind(this);
     const customerFn = options.customer;
     const featureTag = options.feature;
     const traceIdTag = options.traceId;
     const spanNameTag = options.spanName;
-    const resolvedPrompts = this.resolvedPrompts;
     const als = this.als;
     const security = options.security;
 
@@ -367,24 +286,17 @@ export class LaunchPromptly {
                         let effectiveParams = params;
 
                         if (security) {
-                          // 1. Compliance check
-                          if (security.compliance) {
-                            const complianceResult = checkCompliance(
-                              security.compliance,
-                              {
-                                metadata: alsCtx?.metadata,
-                                region: alsCtx?.metadata?.region,
-                              },
-                            );
-                            if (!complianceResult.passed && security.compliance.geofencing?.blockOnViolation) {
-                              throw new ComplianceError(complianceResult.violations);
-                            }
-                            if (!complianceResult.passed && security.compliance.consentTracking?.requireConsent) {
-                              throw new ComplianceError(complianceResult.violations);
+                          // 0. Model policy enforcement (first check)
+                          if (security.modelPolicy) {
+                            const violation = checkModelPolicy(params, security.modelPolicy);
+                            if (violation) {
+                              emit('model.blocked', { violation });
+                              security.modelPolicy.onViolation?.(violation);
+                              throw new ModelPolicyError(violation);
                             }
                           }
 
-                          // 2. Cost guard pre-check
+                          // 1. Cost guard pre-check
                           if (costGuard) {
                             let customerId = alsCtx?.customerId;
                             if (!customerId && customerFn) {
@@ -398,6 +310,7 @@ export class LaunchPromptly {
                             });
 
                             if (costViolation && costGuard.shouldBlock) {
+                              emit('cost.exceeded', { violation: costViolation });
                               security.costGuard?.onBudgetExceeded?.(costViolation);
                               throw new CostLimitError(costViolation);
                             }
@@ -436,8 +349,9 @@ export class LaunchPromptly {
                               inputPiiDetections = mergeDetections(inputPiiDetections, ...providerDets);
                             }
 
-                            // Fire callback
+                            // Fire callback + guardrail event
                             if (inputPiiDetections.length > 0) {
+                              emit('pii.detected', { detections: inputPiiDetections, direction: 'input' });
                               security.pii?.onDetect?.(inputPiiDetections);
                             }
 
@@ -458,13 +372,15 @@ export class LaunchPromptly {
                                 return { ...msg, content: result.redactedText };
                               });
                               effectiveParams = { ...params, messages: redactedMessages };
+                              emit('pii.redacted', { strategy: redactionStrategy, count: inputPiiDetections.length });
                             }
                           }
 
                           // 4. Injection detection
                           if (security.injection?.enabled !== false) {
+                            // Scan user messages AND tool/function results (untrusted external input)
                             const userMessages = params.messages
-                              .filter((m) => m.role === 'user')
+                              .filter((m) => m.role === 'user' || m.role === 'tool' || m.role === 'function')
                               .map((m) => m.content)
                               .join('\n');
 
@@ -485,7 +401,10 @@ export class LaunchPromptly {
                                 );
                               }
 
-                              // Fire callback
+                              // Fire callback + guardrail event
+                              if (injectionResult.riskScore > 0) {
+                                emit('injection.detected', { analysis: injectionResult });
+                              }
                               security.injection?.onDetect?.(injectionResult);
 
                               // Block if configured
@@ -493,6 +412,7 @@ export class LaunchPromptly {
                                 security.injection?.blockOnHighRisk &&
                                 injectionResult.action === 'block'
                               ) {
+                                emit('injection.blocked', { analysis: injectionResult });
                                 throw new PromptInjectionError(injectionResult);
                               }
                             }
@@ -506,6 +426,10 @@ export class LaunchPromptly {
                               'input',
                               security.contentFilter,
                             );
+
+                            if (inputContentViolations.length > 0) {
+                              emit('content.violated', { violations: inputContentViolations, direction: 'input' });
+                            }
 
                             if (hasBlockingViolation(inputContentViolations, security.contentFilter)) {
                               security.contentFilter.onViolation?.(inputContentViolations[0]);
@@ -530,30 +454,52 @@ export class LaunchPromptly {
                           );
                           const latencyMs = Date.now() - startMs;
 
-                          // Wrap the stream with security scanning
-                          const { stream: securedStream, getReport } = createSecurityStream(
-                            streamResult as AsyncIterable<any>,
-                            {
-                              pii: security ? {
-                                enabled: security.pii?.enabled !== false,
-                                types: security.pii?.types,
-                                providers: security.pii?.providers,
+                          // Choose between StreamGuardEngine (real-time) and legacy createSecurityStream (post-hoc)
+                          let outputStream: AsyncIterable<any>;
+                          let getStreamReport: () => StreamSecurityReport;
+
+                          if (security?.streamGuard) {
+                            const engine = new StreamGuardEngine({
+                              streamGuard: security.streamGuard,
+                              pii: security.pii ? {
+                                types: security.pii.types,
+                                providers: security.pii.providers,
                               } : undefined,
-                              injection: security ? {
-                                enabled: security.injection?.enabled !== false,
-                                blockThreshold: security.injection?.blockThreshold,
+                              injection: security.injection ? {
+                                blockThreshold: security.injection.blockThreshold,
                               } : undefined,
-                            },
-                          );
+                              extractText: extractChunkContent,
+                            });
+                            const guarded = engine.wrap(streamResult as AsyncIterable<any>);
+                            outputStream = guarded;
+                            getStreamReport = () => guarded.getReport();
+                          } else {
+                            const { stream: securedStream, getReport } = createSecurityStream(
+                              streamResult as AsyncIterable<any>,
+                              {
+                                pii: security ? {
+                                  enabled: security.pii?.enabled !== false,
+                                  types: security.pii?.types,
+                                  providers: security.pii?.providers,
+                                } : undefined,
+                                injection: security ? {
+                                  enabled: security.injection?.enabled !== false,
+                                  blockThreshold: security.injection?.blockThreshold,
+                                } : undefined,
+                              },
+                            );
+                            outputStream = securedStream;
+                            getStreamReport = getReport;
+                          }
 
                           // Create a wrapper that captures the event after consumption
                           const wrappedStream = (async function* () {
-                            yield* securedStream;
+                            yield* outputStream;
 
                             // Stream complete — capture event with security data
                             void (async () => {
                               try {
-                                const report = getReport();
+                                const report = getStreamReport();
 
                                 const systemMsg = params.messages.find(
                                   (m) => m.role === 'system',
@@ -578,10 +524,6 @@ export class LaunchPromptly {
                                 const traceId = alsCtx?.traceId ?? traceIdTag;
                                 const spanName = alsCtx?.spanName ?? spanNameTag;
 
-                                const promptMeta = systemMsg?.content
-                                  ? resolvedPrompts.get(systemMsg.content)
-                                  : undefined;
-
                                 const event: IngestEventPayload = {
                                   provider: 'openai',
                                   model: params.model,
@@ -596,8 +538,6 @@ export class LaunchPromptly {
                                   fullHash: fingerprint.fullHash,
                                   promptPreview: security ? undefined : fingerprint.promptPreview,
                                   statusCode: 200,
-                                  managedPromptId: promptMeta?.managedPromptId,
-                                  promptVersionId: promptMeta?.promptVersionId,
                                   traceId,
                                   spanName,
                                   metadata: alsCtx?.metadata,
@@ -627,6 +567,17 @@ export class LaunchPromptly {
                                       triggered: injResult.triggered,
                                       action: injResult.action,
                                       detectorUsed: hasMlInjProviders ? 'both' : 'rules',
+                                    };
+                                  }
+
+                                  // Add stream guard metadata
+                                  if (security.streamGuard && report.streamViolations.length > 0) {
+                                    event.streamGuard = {
+                                      aborted: report.aborted,
+                                      violationCount: report.streamViolations.length,
+                                      violationTypes: [...new Set(report.streamViolations.map((v) => v.type))],
+                                      approximateOutputTokens: report.approximateTokens,
+                                      responseLength: report.responseLength,
                                     };
                                   }
                                 }
@@ -678,6 +629,10 @@ export class LaunchPromptly {
                             }
                           }
 
+                          if (outputPiiDetections.length > 0) {
+                            emit('pii.detected', { detections: outputPiiDetections, direction: 'output' });
+                          }
+
                           // Post-call: scan response for content violations
                           if (security.contentFilter?.enabled !== false && security.contentFilter && responseText) {
                             outputContentViolations = detectContentViolations(
@@ -685,6 +640,20 @@ export class LaunchPromptly {
                               'output',
                               security.contentFilter,
                             );
+                            if (outputContentViolations.length > 0) {
+                              emit('content.violated', { violations: outputContentViolations, direction: 'output' });
+                            }
+                          }
+
+                          // Post-call: output schema validation
+                          if (security.outputSchema && responseText) {
+                            const validation = validateOutputSchema(responseText, security.outputSchema);
+                            if (!validation.valid) {
+                              emit('schema.invalid', { errors: validation.errors, responseText });
+                              if (security.outputSchema.blockOnInvalid) {
+                                throw new OutputSchemaError(validation.errors, responseText);
+                              }
+                            }
                           }
 
                           // Post-call: de-redact response if we have a mapping
@@ -760,11 +729,6 @@ export class LaunchPromptly {
                             const traceId = alsCtx?.traceId ?? traceIdTag;
                             const spanName = alsCtx?.spanName ?? spanNameTag;
 
-                            // Check if system message matches a resolved managed prompt
-                            const promptMeta = systemMsg?.content
-                              ? resolvedPrompts.get(systemMsg.content)
-                              : undefined;
-
                             const event: IngestEventPayload = {
                               provider: 'openai',
                               model: params.model,
@@ -777,11 +741,8 @@ export class LaunchPromptly {
                               feature,
                               systemHash: fingerprint.systemHash ?? undefined,
                               fullHash: fingerprint.fullHash,
-                              // Strip promptPreview when security is enabled (PII safety)
                               promptPreview: security ? undefined : fingerprint.promptPreview,
                               statusCode: 200,
-                              managedPromptId: promptMeta?.managedPromptId,
-                              promptVersionId: promptMeta?.promptVersionId,
                               traceId,
                               spanName,
                               metadata: alsCtx?.metadata,
@@ -829,16 +790,6 @@ export class LaunchPromptly {
                                 };
                               }
 
-                              if (security.compliance) {
-                                event.compliance = buildComplianceEventData(
-                                  security.compliance,
-                                  {
-                                    metadata: alsCtx?.metadata,
-                                    region: alsCtx?.metadata?.region,
-                                  },
-                                );
-                              }
-
                               if (costGuard) {
                                 event.costGuard = {
                                   estimatedCost: costUsd,
@@ -879,6 +830,62 @@ export class LaunchPromptly {
           : value;
       },
     }) as T;
+  }
+
+  /**
+   * Wrap an Anthropic client with security pipeline interception.
+   *
+   * Intercepts `client.messages.create()` to run PII redaction, injection
+   * detection, cost controls, content filtering, and compliance checks.
+   *
+   * @example
+   * ```ts
+   * import Anthropic from '@anthropic-ai/sdk';
+   * const client = new Anthropic({ apiKey: '...' });
+   * const wrapped = lp.wrapAnthropic(client, {
+   *   security: { pii: { redaction: 'placeholder' } },
+   * });
+   * const result = await wrapped.messages.create({
+   *   model: 'claude-sonnet-4-20250514',
+   *   max_tokens: 1024,
+   *   messages: [{ role: 'user', content: 'Hello' }],
+   * });
+   * ```
+   */
+  wrapAnthropic<T extends object>(client: T, options: WrapOptions = {}): T {
+    return wrapAnthropicClient(client, {
+      batcher: this.batcher,
+      als: this.als,
+      emit: this._emit.bind(this),
+    }, options);
+  }
+
+  /**
+   * Wrap a Google Gemini client with security pipeline interception.
+   *
+   * Intercepts `client.models.generateContent()` and
+   * `client.models.generateContentStream()` to run PII redaction, injection
+   * detection, cost controls, content filtering, and compliance checks.
+   *
+   * @example
+   * ```ts
+   * import { GoogleGenAI } from '@google/genai';
+   * const client = new GoogleGenAI({ apiKey: '...' });
+   * const wrapped = lp.wrapGemini(client, {
+   *   security: { pii: { redaction: 'placeholder' } },
+   * });
+   * const result = await wrapped.models.generateContent({
+   *   model: 'gemini-2.0-flash',
+   *   contents: [{ role: 'user', parts: [{ text: 'Hello' }] }],
+   * });
+   * ```
+   */
+  wrapGemini<T extends object>(client: T, options: WrapOptions = {}): T {
+    return wrapGeminiClient(client, {
+      batcher: this.batcher,
+      als: this.als,
+      emit: this._emit.bind(this),
+    }, options);
   }
 
   /** Flush all pending events to the API. */

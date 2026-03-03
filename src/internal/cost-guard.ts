@@ -9,7 +9,11 @@ export interface CostGuardOptions {
   maxCostPerRequest?: number;
   maxCostPerMinute?: number;
   maxCostPerHour?: number;
+  /** Maximum total spend per 24-hour rolling window. */
+  maxCostPerDay?: number;
   maxCostPerCustomer?: number;
+  /** Maximum per-customer spend per 24-hour rolling window. */
+  maxCostPerCustomerPerDay?: number;
   maxTokensPerRequest?: number;
   onBudgetExceeded?: (violation: BudgetViolation) => void;
   /** If true, throw CostLimitError when budget is exceeded. Default: true */
@@ -17,7 +21,7 @@ export interface CostGuardOptions {
 }
 
 export interface BudgetViolation {
-  type: 'per_request' | 'per_minute' | 'per_hour' | 'per_customer' | 'max_tokens';
+  type: 'per_request' | 'per_minute' | 'per_hour' | 'per_day' | 'per_customer' | 'per_customer_daily' | 'max_tokens';
   currentSpend: number;
   limit: number;
   customerId?: string;
@@ -112,6 +116,19 @@ export class CostGuard {
       }
     }
 
+    // Check per-day spend (24h rolling window)
+    if (this.options.maxCostPerDay) {
+      const daySpend = this.getSpendInWindow(now - 86_400_000, now);
+      if (daySpend >= this.options.maxCostPerDay) {
+        return {
+          type: 'per_day',
+          currentSpend: daySpend,
+          limit: this.options.maxCostPerDay,
+          customerId: params.customerId,
+        };
+      }
+    }
+
     // Check per-customer spend (per hour)
     if (this.options.maxCostPerCustomer && params.customerId) {
       const customerSpend = this.getSpendInWindow(
@@ -124,6 +141,23 @@ export class CostGuard {
           type: 'per_customer',
           currentSpend: customerSpend,
           limit: this.options.maxCostPerCustomer,
+          customerId: params.customerId,
+        };
+      }
+    }
+
+    // Check per-customer daily spend (24h rolling window)
+    if (this.options.maxCostPerCustomerPerDay && params.customerId) {
+      const customerDaySpend = this.getSpendInWindow(
+        now - 86_400_000,
+        now,
+        params.customerId,
+      );
+      if (customerDaySpend >= this.options.maxCostPerCustomerPerDay) {
+        return {
+          type: 'per_customer_daily',
+          currentSpend: customerDaySpend,
+          limit: this.options.maxCostPerCustomerPerDay,
           customerId: params.customerId,
         };
       }
@@ -179,6 +213,14 @@ export class CostGuard {
     return this.getSpendInWindow(now - 3_600_000, now);
   }
 
+  /**
+   * Get current day spend (24h rolling window).
+   */
+  getCurrentDaySpend(): number {
+    const now = Date.now();
+    return this.getSpendInWindow(now - 86_400_000, now);
+  }
+
   /** Whether to block on budget exceeded */
   get shouldBlock(): boolean {
     return this.blockOnExceed;
@@ -190,7 +232,7 @@ export class CostGuard {
   }
 
   private pruneOldEntries(): void {
-    const cutoff = Date.now() - 3_600_000; // 1 hour
+    const cutoff = Date.now() - 86_400_000; // 24 hours
     while (this.entries.length > 0 && this.entries[0].timestampMs < cutoff) {
       this.entries.shift();
     }

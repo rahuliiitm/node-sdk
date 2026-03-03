@@ -5,7 +5,9 @@
 import type { BudgetViolation } from './internal/cost-guard';
 import type { InjectionAnalysis } from './internal/injection';
 import type { ContentViolation } from './internal/content-filter';
-import type { ComplianceViolation } from './internal/compliance';
+import type { ModelPolicyViolation } from './internal/model-policy';
+import type { StreamViolation } from './types';
+import type { SchemaValidationError as SchemaError } from './internal/schema-validator';
 
 export class PromptInjectionError extends Error {
   readonly analysis: InjectionAnalysis;
@@ -42,13 +44,39 @@ export class ContentViolationError extends Error {
   }
 }
 
-export class ComplianceError extends Error {
-  readonly violations: ComplianceViolation[];
+export class ModelPolicyError extends Error {
+  readonly violation: ModelPolicyViolation;
 
-  constructor(violations: ComplianceViolation[]) {
-    const messages = violations.map((v) => v.message).join('; ');
-    super(`Compliance check failed: ${messages}`);
-    this.name = 'ComplianceError';
-    this.violations = violations;
+  constructor(violation: ModelPolicyViolation) {
+    super(`Model policy violation: ${violation.message}`);
+    this.name = 'ModelPolicyError';
+    this.violation = violation;
+  }
+}
+
+export class OutputSchemaError extends Error {
+  readonly validationErrors: SchemaError[];
+  readonly responseText: string;
+
+  constructor(validationErrors: SchemaError[], responseText: string) {
+    const summary = validationErrors.slice(0, 3).map((e) => e.message).join('; ');
+    super(`Output schema validation failed: ${summary}`);
+    this.name = 'OutputSchemaError';
+    this.validationErrors = validationErrors;
+    this.responseText = responseText;
+  }
+}
+
+export class StreamAbortError extends Error {
+  readonly violation: StreamViolation;
+  readonly partialResponse: string;
+  readonly approximateTokens: number;
+
+  constructor(violation: StreamViolation, partialResponse: string) {
+    super(`Stream aborted: ${violation.type} violation detected at offset ${violation.offset}`);
+    this.name = 'StreamAbortError';
+    this.violation = violation;
+    this.partialResponse = partialResponse;
+    this.approximateTokens = Math.ceil(partialResponse.length / 4);
   }
 }

@@ -139,6 +139,73 @@ describe('CostGuard', () => {
     });
   });
 
+  // ── Per-day spending ─────────────────────────────────────────────────────
+
+  describe('maxCostPerDay', () => {
+    it('blocks after exceeding daily budget', () => {
+      const guard = new CostGuard({ maxCostPerDay: 1.0 });
+
+      for (let i = 0; i < 20; i++) {
+        guard.recordCost(0.06);
+      }
+
+      const violation = guard.checkPreCall({ model: 'gpt-4o' });
+      expect(violation).not.toBeNull();
+      expect(violation!.type).toBe('per_day');
+      expect(violation!.limit).toBe(1.0);
+    });
+
+    it('allows when under daily budget', () => {
+      const guard = new CostGuard({ maxCostPerDay: 10.0 });
+      guard.recordCost(0.01);
+
+      const violation = guard.checkPreCall({ model: 'gpt-4o' });
+      expect(violation).toBeNull();
+    });
+  });
+
+  // ── Per-customer daily spending ─────────────────────────────────────────
+
+  describe('maxCostPerCustomerPerDay', () => {
+    it('blocks specific customer after exceeding daily limit', () => {
+      const guard = new CostGuard({ maxCostPerCustomerPerDay: 0.5 });
+
+      for (let i = 0; i < 10; i++) {
+        guard.recordCost(0.06, 'customer-1');
+      }
+
+      const violation = guard.checkPreCall({ model: 'gpt-4o', customerId: 'customer-1' });
+      expect(violation).not.toBeNull();
+      expect(violation!.type).toBe('per_customer_daily');
+      expect(violation!.customerId).toBe('customer-1');
+    });
+
+    it('allows other customers', () => {
+      const guard = new CostGuard({ maxCostPerCustomerPerDay: 0.5 });
+
+      for (let i = 0; i < 10; i++) {
+        guard.recordCost(0.06, 'customer-1');
+      }
+
+      const violation = guard.checkPreCall({ model: 'gpt-4o', customerId: 'customer-2' });
+      expect(violation).toBeNull();
+    });
+  });
+
+  // ── getCurrentDaySpend ──────────────────────────────────────────────────
+
+  describe('getCurrentDaySpend', () => {
+    it('tracks daily spend accurately', () => {
+      const guard = new CostGuard({ maxCostPerDay: 100 });
+      guard.recordCost(0.10);
+      guard.recordCost(0.20);
+      guard.recordCost(0.05);
+
+      const spend = guard.getCurrentDaySpend();
+      expect(spend).toBeCloseTo(0.35);
+    });
+  });
+
   // ── Edge cases ────────────────────────────────────────────────────────────
 
   describe('edge cases', () => {
