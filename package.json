@@ -1,11 +1,11 @@
 {
   "name": "launchpromptly",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "LaunchPromptly Node.js SDK — runtime safety layer for LLM applications (PII redaction, injection detection, cost guards)",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/launchpromptly/node-sdk"
+    "url": "https://github.com/rahuliiitm/node-sdk"
   },
   "keywords": [
     "launchpromptly",
