@@ -27,7 +27,7 @@ import type {
 } from './types';
 import type { IngestEventPayload } from './internal/event-types';
 
-const DEFAULT_ENDPOINT = 'https://api.launchpromptly.dev';
+const DEFAULT_ENDPOINT = 'https://launchpromptly-api-950530830180.us-west1.run.app';
 
 type CreateFn = (params: ChatCompletionCreateParams) => Promise<ChatCompletion>;
 
