@@ -71,7 +71,7 @@ export class MLToxicityDetector implements ContentFilterProvider {
    * This is async because model loading requires downloading/caching.
    */
   static async create(options?: MLToxicityDetectorOptions): Promise<MLToxicityDetector> {
-    const modelName = options?.modelName ?? 'unitary/toxic-bert';
+    const modelName = options?.modelName ?? 'Xenova/toxic-bert';
     const threshold = options?.threshold ?? DEFAULT_THRESHOLD;
 
     let pipeline: (task: string, model: string, opts?: Record<string, unknown>) => Promise<ClassifierFn>;
@@ -86,7 +86,7 @@ export class MLToxicityDetector implements ContentFilterProvider {
     }
 
     const classifier = await pipeline('text-classification', modelName, {
-      topk: null, // Return all labels with scores
+      top_k: null, // Return all labels with scores
     });
 
     return new MLToxicityDetector(classifier as unknown as ClassifierFn, modelName, threshold);
@@ -102,7 +102,7 @@ export class MLToxicityDetector implements ContentFilterProvider {
   ): MLToxicityDetector {
     return new MLToxicityDetector(
       classifier,
-      options?.modelName ?? 'unitary/toxic-bert',
+      options?.modelName ?? 'Xenova/toxic-bert',
       options?.threshold ?? DEFAULT_THRESHOLD,
     );
   }
@@ -113,7 +113,7 @@ export class MLToxicityDetector implements ContentFilterProvider {
   ): Promise<ContentViolation[]> {
     if (!text) return [];
 
-    const rawResults = await this._classifier(text, { topk: null });
+    const rawResults = await this._classifier(text, { top_k: null });
 
     // Normalise: the pipeline wraps results in an outer list for a single input.
     let labelScores: Array<{ label: string; score: number }>;
