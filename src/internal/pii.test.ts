@@ -516,7 +516,7 @@ describe('PII Detection', () => {
   // ── Custom PII Pattern Registration ─────────────────────────────────────────
 
   describe('createCustomDetector', () => {
-    it('detects custom employee_id pattern', () => {
+    it('detects custom employee_id pattern', async () => {
       const patterns: CustomPIIPattern[] = [
         {
           name: 'Employee ID',
@@ -528,14 +528,14 @@ describe('PII Detection', () => {
       const detector = createCustomDetector(patterns);
       expect(detector.name).toBe('custom');
 
-      const result = detector.detect('Employee EMP-123456 is on leave');
+      const result = await Promise.resolve(detector.detect('Employee EMP-123456 is on leave'));
       expect(result).toHaveLength(1);
       expect(result[0].type).toBe('employee_id');
       expect(result[0].value).toBe('EMP-123456');
       expect(result[0].confidence).toBe(0.9);
     });
 
-    it('uses default confidence when not provided', () => {
+    it('uses default confidence when not provided', async () => {
       const patterns: CustomPIIPattern[] = [
         {
           name: 'Internal ID',
@@ -544,41 +544,41 @@ describe('PII Detection', () => {
         },
       ];
       const detector = createCustomDetector(patterns);
-      const result = detector.detect('Ref INT-9999');
+      const result = await Promise.resolve(detector.detect('Ref INT-9999'));
       expect(result).toHaveLength(1);
       expect(result[0].confidence).toBe(0.8);
     });
 
-    it('detects multiple custom patterns', () => {
+    it('detects multiple custom patterns', async () => {
       const patterns: CustomPIIPattern[] = [
         { name: 'Emp ID', type: 'employee_id', pattern: /EMP-\d{6}/, confidence: 0.9 },
         { name: 'Badge', type: 'badge_number', pattern: /BADGE-[A-Z]{2}\d{4}/, confidence: 0.85 },
       ];
       const detector = createCustomDetector(patterns);
-      const result = detector.detect('EMP-123456 has BADGE-AB1234');
+      const result = await Promise.resolve(detector.detect('EMP-123456 has BADGE-AB1234'));
       expect(result).toHaveLength(2);
       expect(result[0].type).toBe('employee_id');
       expect(result[1].type).toBe('badge_number');
     });
 
-    it('returns empty for non-matching text', () => {
+    it('returns empty for non-matching text', async () => {
       const patterns: CustomPIIPattern[] = [
         { name: 'Emp ID', type: 'employee_id', pattern: /EMP-\d{6}/ },
       ];
       const detector = createCustomDetector(patterns);
-      const result = detector.detect('No employee ids here');
+      const result = await Promise.resolve(detector.detect('No employee ids here'));
       expect(result).toHaveLength(0);
     });
 
-    it('respects type filtering', () => {
+    it('respects type filtering', async () => {
       const patterns: CustomPIIPattern[] = [
         { name: 'Emp ID', type: 'employee_id', pattern: /EMP-\d{6}/ },
         { name: 'Badge', type: 'badge_number', pattern: /BADGE-[A-Z]{2}\d{4}/ },
       ];
       const detector = createCustomDetector(patterns);
-      const result = detector.detect('EMP-123456 has BADGE-AB1234', {
+      const result = await Promise.resolve(detector.detect('EMP-123456 has BADGE-AB1234', {
         types: ['employee_id' as any],
-      });
+      }));
       expect(result).toHaveLength(1);
       expect(result[0].type).toBe('employee_id');
     });

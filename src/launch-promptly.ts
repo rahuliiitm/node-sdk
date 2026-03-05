@@ -37,11 +37,11 @@ type CreateFn = (params: ChatCompletionCreateParams) => Promise<ChatCompletion>;
  * Scan tool definitions for PII in parameter descriptions and schemas.
  * @internal
  */
-function scanToolDefinitions(
+async function scanToolDefinitions(
   tools: any[],
   piiTypes?: import('./internal/pii').PIIType[],
   providers?: import('./internal/pii').PIIDetectorProvider[],
-): PIIDetection[] {
+): Promise<PIIDetection[]> {
   const textsToScan: string[] = [];
 
   for (const tool of tools) {
@@ -70,10 +70,10 @@ function scanToolDefinitions(
   let detections = detectPII(combinedText, { types: piiTypes });
 
   if (providers?.length) {
-    const providerDets = providers.map((p) => {
-      try { return p.detect(combinedText, { types: piiTypes }); }
-      catch { return []; }
-    });
+    const providerDets = await Promise.all(providers.map(async (p) => {
+      try { return await Promise.resolve(p.detect(combinedText, { types: piiTypes })); }
+      catch { return [] as PIIDetection[]; }
+    }));
     detections = mergeDetections(detections, ...providerDets);
   }
 
@@ -99,11 +99,11 @@ function collectDescriptions(obj: any, result: string[]): void {
  * Scan tool call arguments in the response for PII.
  * @internal
  */
-function scanToolCallArguments(
+async function scanToolCallArguments(
   toolCalls: any[],
   piiTypes?: import('./internal/pii').PIIType[],
   providers?: import('./internal/pii').PIIDetectorProvider[],
-): PIIDetection[] {
+): Promise<PIIDetection[]> {
   const textsToScan: string[] = [];
 
   for (const tc of toolCalls) {
@@ -118,10 +118,10 @@ function scanToolCallArguments(
   let detections = detectPII(combinedText, { types: piiTypes });
 
   if (providers?.length) {
-    const providerDets = providers.map((p) => {
-      try { return p.detect(combinedText, { types: piiTypes }); }
-      catch { return []; }
-    });
+    const providerDets = await Promise.all(providers.map(async (p) => {
+      try { return await Promise.resolve(p.detect(combinedText, { types: piiTypes })); }
+      catch { return [] as PIIDetection[]; }
+    }));
     detections = mergeDetections(detections, ...providerDets);
   }
 
@@ -320,7 +320,7 @@ export class LaunchPromptly {
                           if (security.pii?.enabled !== false) {
                             // Scan tool definitions for PII (parameter descriptions, etc.)
                             if (params.tools && Array.isArray(params.tools)) {
-                              const toolDefDetections = scanToolDefinitions(
+                              const toolDefDetections = await scanToolDefinitions(
                                 params.tools,
                                 security.pii?.types,
                                 security.pii?.providers,
@@ -342,10 +342,10 @@ export class LaunchPromptly {
 
                             // Merge with ML provider detections if any
                             if (security.pii?.providers?.length) {
-                              const providerDets = security.pii.providers.map((p) => {
-                                try { return p.detect(allMessageText, { types: security.pii?.types }); }
-                                catch { return []; }
-                              });
+                              const providerDets = await Promise.all(security.pii.providers.map(async (p) => {
+                                try { return await Promise.resolve(p.detect(allMessageText, { types: security.pii?.types })); }
+                                catch { return [] as PIIDetection[]; }
+                              }));
                               inputPiiDetections = mergeDetections(inputPiiDetections, ...providerDets);
                             }
 
@@ -359,8 +359,8 @@ export class LaunchPromptly {
                             const redactionStrategy: RedactionStrategy = security.pii?.redaction ?? 'placeholder';
                             if (inputPiiDetections.length > 0 && redactionStrategy !== 'none') {
                               redactionApplied = true;
-                              const redactedMessages = params.messages.map((msg) => {
-                                const result = redactPII(msg.content, {
+                              const redactedMessages = await Promise.all(params.messages.map(async (msg) => {
+                                const result = await redactPII(msg.content, {
                                   strategy: redactionStrategy,
                                   types: security.pii?.types,
                                   providers: security.pii?.providers,
@@ -370,7 +370,7 @@ export class LaunchPromptly {
                                   redactionMapping.set(k, v);
                                 }
                                 return { ...msg, content: result.redactedText };
-                              });
+                              }));
                               effectiveParams = { ...params, messages: redactedMessages };
                               emit('pii.redacted', { strategy: redactionStrategy, count: inputPiiDetections.length });
                             }
@@ -391,10 +391,10 @@ export class LaunchPromptly {
 
                               // Merge with ML providers
                               if (security.injection?.providers?.length) {
-                                const providerResults = security.injection.providers.map((p) => {
-                                  try { return p.detect(userMessages); }
+                                const providerResults = await Promise.all(security.injection.providers.map(async (p) => {
+                                  try { return await Promise.resolve(p.detect(userMessages)); }
                                   catch { return { riskScore: 0, triggered: [] as string[], action: 'allow' as const }; }
-                                });
+                                }));
                                 injectionResult = mergeInjectionAnalyses(
                                   [injectionResult, ...providerResults],
                                   { blockThreshold: security.injection?.blockThreshold },
@@ -619,7 +619,7 @@ export class LaunchPromptly {
                           // Post-call: scan tool call arguments for PII
                           const responseToolCalls = (result as any).choices?.[0]?.message?.tool_calls;
                           if (security.pii?.enabled !== false && responseToolCalls && Array.isArray(responseToolCalls)) {
-                            const toolCallDetections = scanToolCallArguments(
+                            const toolCallDetections = await scanToolCallArguments(
                               responseToolCalls,
                               security.pii?.types,
                               security.pii?.providers,

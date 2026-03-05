@@ -94,10 +94,10 @@ export function createSecurityStream<T>(
         });
 
         if (options?.pii?.providers?.length) {
-          const providerDets = options.pii.providers.map((p) => {
-            try { return p.detect(fullText, { types: options?.pii?.types }); }
-            catch { return []; }
-          });
+          const providerDets = await Promise.all(options.pii.providers.map(async (p) => {
+            try { return await Promise.resolve(p.detect(fullText, { types: options?.pii?.types })); }
+            catch { return [] as import('./pii').PIIDetection[]; }
+          }));
           piiDetections = mergeDetections(piiDetections, ...providerDets);
         }
 
@@ -212,7 +212,7 @@ export class StreamGuardEngine<T> {
             engine._checkLengthLimit();
 
             if (!engine.aborted && engine.charsSinceLastScan >= engine.scanInterval) {
-              engine._periodicScan();
+              await engine._periodicScan();
             }
           }
 
@@ -227,7 +227,7 @@ export class StreamGuardEngine<T> {
 
       // Stream completed or aborted — run final scan
       if (engine.doFinalScan && !engine.aborted) {
-        engine._finalScan();
+        await engine._finalScan();
       }
       engine._buildReport();
     };
@@ -290,7 +290,7 @@ export class StreamGuardEngine<T> {
     }
   }
 
-  private _periodicScan(): void {
+  private async _periodicScan(): Promise<void> {
     this.charsSinceLastScan = 0;
     const scanText = this.buffer.slice(this.windowStart);
 
@@ -299,10 +299,10 @@ export class StreamGuardEngine<T> {
       let detections = detectPII(scanText, { types: this.piiConfig?.types });
 
       if (this.piiConfig?.providers?.length) {
-        const providerDets = this.piiConfig.providers.map((p) => {
-          try { return p.detect(scanText, { types: this.piiConfig?.types }); }
-          catch { return []; }
-        });
+        const providerDets = await Promise.all(this.piiConfig.providers.map(async (p) => {
+          try { return await Promise.resolve(p.detect(scanText, { types: this.piiConfig?.types })); }
+          catch { return [] as import('./pii').PIIDetection[]; }
+        }));
         detections = mergeDetections(detections, ...providerDets);
       }
 
@@ -343,7 +343,7 @@ export class StreamGuardEngine<T> {
     }
   }
 
-  private _finalScan(): void {
+  private async _finalScan(): Promise<void> {
     const fullText = this.buffer;
     if (!fullText) return;
 
@@ -351,10 +351,10 @@ export class StreamGuardEngine<T> {
     if (this.doPiiScan) {
       let detections = detectPII(fullText, { types: this.piiConfig?.types });
       if (this.piiConfig?.providers?.length) {
-        const providerDets = this.piiConfig.providers.map((p) => {
-          try { return p.detect(fullText, { types: this.piiConfig?.types }); }
-          catch { return []; }
-        });
+        const providerDets = await Promise.all(this.piiConfig.providers.map(async (p) => {
+          try { return await Promise.resolve(p.detect(fullText, { types: this.piiConfig?.types })); }
+          catch { return [] as import('./pii').PIIDetection[]; }
+        }));
         detections = mergeDetections(detections, ...providerDets);
       }
       if (detections.length > 0) {

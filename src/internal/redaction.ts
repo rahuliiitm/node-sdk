@@ -175,10 +175,10 @@ function maskReplacement(
  * Detect and redact PII in text.
  * Returns the redacted text, a list of detections, and a mapping for de-redaction.
  */
-export function redactPII(
+export async function redactPII(
   text: string,
   options?: RedactionOptions,
-): RedactionResult {
+): Promise<RedactionResult> {
   if (!text) {
     return { redactedText: '', detections: [], mapping: new Map() };
   }
@@ -188,15 +188,15 @@ export function redactPII(
   // Run built-in regex detection
   let detections = detectPII(text, options);
 
-  // Run additional providers and merge
+  // Run additional providers and merge (supports async ML providers)
   if (options?.providers && options.providers.length > 0) {
-    const providerDetections = options.providers.map((p) => {
+    const providerDetections = await Promise.all(options.providers.map(async (p) => {
       try {
-        return p.detect(text, options);
+        return await Promise.resolve(p.detect(text, options));
       } catch {
-        return []; // Plugin isolation: failures don't crash core
+        return [] as PIIDetection[]; // Plugin isolation: failures don't crash core
       }
-    });
+    }));
     detections = mergeDetections(detections, ...providerDetections);
   }
 

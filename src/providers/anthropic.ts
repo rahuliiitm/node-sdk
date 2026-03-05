@@ -122,31 +122,31 @@ export function extractAnthropicMessageTexts(params: AnthropicCreateParams): {
  * Apply redaction to Anthropic message content.
  * Returns new content with PII replaced.
  */
-function redactContent(
+async function redactContent(
   content: string | AnthropicContentBlock[],
   strategy: import('../internal/redaction').RedactionStrategy,
   types?: import('../internal/pii').PIIType[],
   providers?: import('../internal/pii').PIIDetectorProvider[],
   mapping?: Map<string, string>,
-): string | AnthropicContentBlock[] {
+): Promise<string | AnthropicContentBlock[]> {
   if (typeof content === 'string') {
-    const result = redactPII(content, { strategy, types, providers });
+    const result = await redactPII(content, { strategy, types, providers });
     if (mapping) {
       for (const [k, v] of result.mapping) mapping.set(k, v);
     }
     return result.redactedText;
   }
 
-  return content.map((block) => {
+  return Promise.all(content.map(async (block) => {
     if (block.type === 'text' && typeof block.text === 'string') {
-      const result = redactPII(block.text, { strategy, types, providers });
+      const result = await redactPII(block.text, { strategy, types, providers });
       if (mapping) {
         for (const [k, v] of result.mapping) mapping.set(k, v);
       }
       return { ...block, text: result.redactedText };
     }
     return block;
-  });
+  }));
 }
 
 /**
@@ -286,10 +286,10 @@ export function wrapAnthropicClient<T extends object>(
 
                     let detections = detectPII(allText, { types: security.pii?.types });
                     if (security.pii?.providers?.length) {
-                      const providerDets = security.pii.providers.map((p) => {
-                        try { return p.detect(allText, { types: security.pii?.types }); }
-                        catch { return []; }
-                      });
+                      const providerDets = await Promise.all(security.pii.providers.map(async (p) => {
+                        try { return await Promise.resolve(p.detect(allText, { types: security.pii?.types })); }
+                        catch { return [] as PIIDetection[]; }
+                      }));
                       detections = mergeDetections(detections, ...providerDets);
                     }
                     inputPiiDetections = detections;
@@ -303,16 +303,16 @@ export function wrapAnthropicClient<T extends object>(
                     if (inputPiiDetections.length > 0 && strategy !== 'none') {
                       redactionApplied = true;
                       emit?.('pii.redacted', { strategy, count: inputPiiDetections.length });
-                      const redactedMessages = params.messages.map((msg) => ({
+                      const redactedMessages = await Promise.all(params.messages.map(async (msg) => ({
                         ...msg,
-                        content: redactContent(msg.content, strategy, security.pii?.types, security.pii?.providers, redactionMapping),
-                      }));
+                        content: await redactContent(msg.content, strategy, security.pii?.types, security.pii?.providers, redactionMapping),
+                      })));
 
                       let redactedSystem = params.system;
                       if (params.system) {
                         redactedSystem = typeof params.system === 'string'
-                          ? redactContent(params.system, strategy, security.pii?.types, security.pii?.providers, redactionMapping) as string
-                          : redactContent(params.system, strategy, security.pii?.types, security.pii?.providers, redactionMapping) as AnthropicContentBlock[];
+                          ? await redactContent(params.system, strategy, security.pii?.types, security.pii?.providers, redactionMapping) as string
+                          : await redactContent(params.system, strategy, security.pii?.types, security.pii?.providers, redactionMapping) as AnthropicContentBlock[];
                       }
 
                       effectiveParams = {
@@ -331,10 +331,10 @@ export function wrapAnthropicClient<T extends object>(
                         blockThreshold: security.injection?.blockThreshold,
                       });
                       if (security.injection?.providers?.length) {
-                        const providerResults = security.injection.providers.map((p) => {
-                          try { return p.detect(userText); }
+                        const providerResults = await Promise.all(security.injection.providers.map(async (p) => {
+                          try { return await Promise.resolve(p.detect(userText)); }
                           catch { return { riskScore: 0, triggered: [] as string[], action: 'allow' as const }; }
-                        });
+                        }));
                         injectionResult = mergeInjectionAnalyses(
                           [injectionResult, ...providerResults],
                           { blockThreshold: security.injection?.blockThreshold },

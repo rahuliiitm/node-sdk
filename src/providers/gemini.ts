@@ -147,23 +147,23 @@ export function extractGeminiMessageTexts(params: GeminiGenerateContentParams): 
 /**
  * Apply redaction to Gemini content parts.
  */
-function redactGeminiContent(
+async function redactGeminiContent(
   content: GeminiContent,
   strategy: import('../internal/redaction').RedactionStrategy,
   types?: import('../internal/pii').PIIType[],
   providers?: import('../internal/pii').PIIDetectorProvider[],
   mapping?: Map<string, string>,
-): GeminiContent {
-  const redactedParts = content.parts.map((part) => {
+): Promise<GeminiContent> {
+  const redactedParts = await Promise.all(content.parts.map(async (part) => {
     if (typeof part.text === 'string') {
-      const result = redactPII(part.text, { strategy, types, providers });
+      const result = await redactPII(part.text, { strategy, types, providers });
       if (mapping) {
         for (const [k, v] of result.mapping) mapping.set(k, v);
       }
       return { ...part, text: result.redactedText };
     }
     return part;
-  });
+  }));
   return { ...content, parts: redactedParts };
 }
 
@@ -323,10 +323,10 @@ export function wrapGeminiClient<T extends object>(
 
                     let detections = detectPII(allText, { types: security.pii?.types });
                     if (security.pii?.providers?.length) {
-                      const providerDets = security.pii.providers.map((p) => {
-                        try { return p.detect(allText, { types: security.pii?.types }); }
-                        catch { return []; }
-                      });
+                      const providerDets = await Promise.all(security.pii.providers.map(async (p) => {
+                        try { return await Promise.resolve(p.detect(allText, { types: security.pii?.types })); }
+                        catch { return [] as PIIDetection[]; }
+                      }));
                       detections = mergeDetections(detections, ...providerDets);
                     }
                     inputPiiDetections = detections;
@@ -340,20 +340,20 @@ export function wrapGeminiClient<T extends object>(
                     if (inputPiiDetections.length > 0 && redactionStrategy !== 'none') {
                       redactionApplied = true;
                       const contents = normalizeContents(params.contents);
-                      const redactedContents = contents.map((c) =>
+                      const redactedContents = await Promise.all(contents.map((c) =>
                         redactGeminiContent(c, redactionStrategy, security.pii?.types, security.pii?.providers, redactionMapping),
-                      );
+                      ));
 
                       let redactedConfig = params.config;
                       if (params.config?.systemInstruction) {
                         if (typeof params.config.systemInstruction === 'string') {
-                          const result = redactPII(params.config.systemInstruction, {
+                          const result = await redactPII(params.config.systemInstruction, {
                             strategy: redactionStrategy, types: security.pii?.types, providers: security.pii?.providers,
                           });
                           for (const [k, v] of result.mapping) redactionMapping.set(k, v);
                           redactedConfig = { ...params.config, systemInstruction: result.redactedText };
                         } else {
-                          const redacted = redactGeminiContent(
+                          const redacted = await redactGeminiContent(
                             params.config.systemInstruction, redactionStrategy,
                             security.pii?.types, security.pii?.providers, redactionMapping,
                           );
@@ -378,10 +378,10 @@ export function wrapGeminiClient<T extends object>(
                         blockThreshold: security.injection?.blockThreshold,
                       });
                       if (security.injection?.providers?.length) {
-                        const providerResults = security.injection.providers.map((p) => {
-                          try { return p.detect(userText); }
+                        const providerResults = await Promise.all(security.injection.providers.map(async (p) => {
+                          try { return await Promise.resolve(p.detect(userText)); }
                           catch { return { riskScore: 0, triggered: [] as string[], action: 'allow' as const }; }
-                        });
+                        }));
                         injectionResult = mergeInjectionAnalyses(
                           [injectionResult, ...providerResults],
                           { blockThreshold: security.injection?.blockThreshold },

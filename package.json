@@ -29,6 +29,11 @@
       "types": "./dist/index.d.ts",
       "require": "./dist/index.js",
       "import": "./dist/index.js"
+    },
+    "./ml": {
+      "types": "./dist/ml/index.d.ts",
+      "require": "./dist/ml/index.js",
+      "import": "./dist/ml/index.js"
     }
   },
   "files": [
@@ -44,6 +49,14 @@
     "test": "jest --passWithNoTests",
     "test:integration": "tsx tests/integration-test.ts",
     "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@huggingface/transformers": ">=3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@huggingface/transformers": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/jest": "^29.5.0",

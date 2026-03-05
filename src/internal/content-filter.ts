@@ -33,7 +33,7 @@ export interface ContentViolation {
 
 /** Provider interface for pluggable content detectors (e.g., ML toxicity). */
 export interface ContentFilterProvider {
-  detect(text: string, location: 'input' | 'output'): ContentViolation[];
+  detect(text: string, location: 'input' | 'output'): ContentViolation[] | Promise<ContentViolation[]>;
   readonly name: string;
 }
 

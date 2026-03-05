@@ -19,7 +19,7 @@ export interface InjectionOptions {
 
 /** Provider interface for pluggable injection detectors (e.g., ML plugin). */
 export interface InjectionDetectorProvider {
-  detect(text: string, options?: InjectionOptions): InjectionAnalysis;
+  detect(text: string, options?: InjectionOptions): InjectionAnalysis | Promise<InjectionAnalysis>;
   readonly name: string;
 }
 

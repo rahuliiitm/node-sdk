@@ -36,9 +36,9 @@ export interface PIIDetectOptions {
 
 /** Provider interface for pluggable PII detectors (e.g., ML plugin). */
 export interface PIIDetectorProvider {
-  detect(text: string, options?: PIIDetectOptions): PIIDetection[];
+  detect(text: string, options?: PIIDetectOptions): PIIDetection[] | Promise<PIIDetection[]>;
   readonly name: string;
-  readonly supportedTypes: PIIType[];
+  readonly supportedTypes: (PIIType | string)[];
 }
 
 // ── Regex patterns ──────────────────────────────────────────────────────────
