@@ -268,6 +268,35 @@ describe('PII Detection', () => {
     });
   });
 
+  // ── ReDoS resistance ──────────────────────────────────────────────────────
+
+  describe('ReDoS resistance', () => {
+    it('credit card regex does not hang on adversarial input', () => {
+      const adversarial = '1234 5678 9012 3456 7890 1234 5678 9012 3456 '.repeat(20);
+      const start = performance.now();
+      detectPII(adversarial, { types: ['credit_card'] });
+      const elapsed = performance.now() - start;
+      expect(elapsed).toBeLessThan(100);
+    });
+
+    it('credit card regex does not hang on digits-only non-matching input', () => {
+      const adversarial = '1'.repeat(1000) + 'X';
+      const start = performance.now();
+      detectPII(adversarial, { types: ['credit_card'] });
+      const elapsed = performance.now() - start;
+      expect(elapsed).toBeLessThan(100);
+    });
+
+    it('input length is capped to prevent DoS', () => {
+      const huge = 'a@b.com '.repeat(200000);
+      const start = performance.now();
+      const result = detectPII(huge);
+      const elapsed = performance.now() - start;
+      expect(elapsed).toBeLessThan(5000);
+      expect(result.length).toBeGreaterThan(0);
+    });
+  });
+
   // ── Edge cases ────────────────────────────────────────────────────────────
 
   describe('edge cases', () => {

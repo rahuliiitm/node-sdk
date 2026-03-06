@@ -221,4 +221,27 @@ describe('PII Redaction', () => {
       expect(result.detections).toHaveLength(1);
     });
   });
+
+  // ── Security regression: shared counters ────────────────────────────────
+
+  describe('shared counters prevent placeholder collisions', () => {
+    it('uses shared counters across multiple calls', async () => {
+      const counters: Record<string, number> = {};
+      const r1 = await redactPII('Contact alice@example.com', { strategy: 'placeholder' }, counters);
+      const r2 = await redactPII('Contact bob@example.com', { strategy: 'placeholder' }, counters);
+
+      expect(r1.redactedText).toContain('[EMAIL_1]');
+      expect(r2.redactedText).toContain('[EMAIL_2]');
+      // Without shared counters, both would be [EMAIL_1]
+    });
+
+    it('without shared counters, counters reset per call', async () => {
+      const r1 = await redactPII('Contact alice@example.com', { strategy: 'placeholder' });
+      const r2 = await redactPII('Contact bob@example.com', { strategy: 'placeholder' });
+
+      // Both get [EMAIL_1] — this is the collision bug shared counters fix
+      expect(r1.redactedText).toContain('[EMAIL_1]');
+      expect(r2.redactedText).toContain('[EMAIL_1]');
+    });
+  });
 });

@@ -174,10 +174,15 @@ function maskReplacement(
 /**
  * Detect and redact PII in text.
  * Returns the redacted text, a list of detections, and a mapping for de-redaction.
+ *
+ * Pass `sharedCounters` to share placeholder indices across multiple calls
+ * (e.g., when redacting multiple messages in a conversation).
+ * This prevents placeholder collisions like two different emails both becoming [EMAIL_1].
  */
 export async function redactPII(
   text: string,
   options?: RedactionOptions,
+  sharedCounters?: Record<string, number>,
 ): Promise<RedactionResult> {
   if (!text) {
     return { redactedText: '', detections: [], mapping: new Map() };
@@ -205,7 +210,7 @@ export async function redactPII(
   }
 
   const mapping = new Map<string, string>();
-  const counters = makeCounters();
+  const counters = sharedCounters ?? makeCounters();
 
   // Build redacted text by replacing from end to start (preserves positions)
   let redacted = text;

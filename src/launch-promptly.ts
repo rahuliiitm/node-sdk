@@ -190,6 +190,19 @@ export class LaunchPromptly {
 
     this.apiKey = resolvedKey;
     this.endpoint = options.endpoint ?? DEFAULT_ENDPOINT;
+
+    // Validate endpoint URL to prevent SSRF
+    try {
+      const url = new URL(this.endpoint);
+      if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+        throw new Error(`Endpoint must use HTTPS or HTTP protocol, got: ${url.protocol}`);
+      }
+    } catch (e) {
+      if (e instanceof TypeError) {
+        throw new Error(`Invalid endpoint URL: ${this.endpoint}`);
+      }
+      throw e;
+    }
     this._eventHandlers = options.on ?? {};
     this.batcher = new EventBatcher(
       resolvedKey,
@@ -359,18 +372,22 @@ export class LaunchPromptly {
                             const redactionStrategy: RedactionStrategy = security.pii?.redaction ?? 'placeholder';
                             if (inputPiiDetections.length > 0 && redactionStrategy !== 'none') {
                               redactionApplied = true;
-                              const redactedMessages = await Promise.all(params.messages.map(async (msg) => {
+                              // Shared counters across all messages prevent placeholder collisions
+                              // (e.g., two messages both having [EMAIL_1] for different emails)
+                              const sharedCounters: Record<string, number> = {};
+                              const redactedMessages: typeof params.messages = [];
+                              for (const msg of params.messages) {
                                 const result = await redactPII(msg.content, {
                                   strategy: redactionStrategy,
                                   types: security.pii?.types,
                                   providers: security.pii?.providers,
-                                });
+                                }, sharedCounters);
                                 // Accumulate all mappings for de-redaction
                                 for (const [k, v] of result.mapping) {
                                   redactionMapping.set(k, v);
                                 }
-                                return { ...msg, content: result.redactedText };
-                              }));
+                                redactedMessages.push({ ...msg, content: result.redactedText });
+                              }
                               effectiveParams = { ...params, messages: redactedMessages };
                               emit('pii.redacted', { strategy: redactionStrategy, count: inputPiiDetections.length });
                             }

@@ -99,9 +99,13 @@ const RULES: InjectionRule[] = [
 
 // ── Detection ───────────────────────────────────────────────────────────────
 
+/** Maximum text length for injection scanning to prevent DoS. */
+const MAX_INJECTION_SCAN_LENGTH = 500_000; // 500KB
+
 /**
  * Analyze text for prompt injection patterns.
  * Returns a risk score (0-1), triggered categories, and recommended action.
+ * Text longer than 500KB is truncated before scanning.
  */
 export function detectInjection(
   text: string,
@@ -110,6 +114,9 @@ export function detectInjection(
   if (!text) {
     return { riskScore: 0, triggered: [], action: 'allow' };
   }
+
+  // Cap input length to prevent DoS
+  const scanText = text.length > MAX_INJECTION_SCAN_LENGTH ? text.slice(0, MAX_INJECTION_SCAN_LENGTH) : text;
 
   const warnThreshold = options?.warnThreshold ?? 0.3;
   const blockThreshold = options?.blockThreshold ?? 0.7;
@@ -125,7 +132,7 @@ export function detectInjection(
       // Reset lastIndex for global patterns
       if (pattern.global) pattern.lastIndex = 0;
 
-      if (pattern.test(text)) {
+      if (pattern.test(scanText)) {
         ruleTriggered = true;
         matchCount++;
       }

@@ -120,4 +120,25 @@ describe('EventBatcher', () => {
     await new Promise((r) => setTimeout(r, 200));
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  // ── Security regression: flushing flag race condition ───────────────────
+
+  it('should reset flushing flag even when sendWithRetry fails', async () => {
+    fetchSpy.mockRejectedValue(new Error('permanent failure'));
+
+    const batcher = new EventBatcher('lp_test', 'http://localhost:3001', 1, 60000);
+    batcher.enqueue(mockEvent);
+
+    // Wait for all retries to exhaust
+    await new Promise((r) => setTimeout(r, 15000));
+
+    // Flushing flag should be reset — enqueue + flush should work again
+    batcher.enqueue(mockEvent);
+    await new Promise((r) => setTimeout(r, 100));
+
+    // If flushing flag was stuck, this second batch would never attempt
+    expect(fetchSpy.mock.calls.length).toBeGreaterThan(3);
+
+    batcher.destroy();
+  }, 20000);
 });

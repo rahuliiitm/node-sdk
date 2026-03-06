@@ -52,7 +52,7 @@ const PHONE_INTL_RE = /(?<=^|[\s(])\+\d{1,3}[-.\s]?\d{4,14}(?:[-.\s]\d{1,6})*\b/
 
 const SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/g;
 
-const CREDIT_CARD_RE = /\b(?:\d[ \-]*?){13,19}\b/g;
+const CREDIT_CARD_RE = /\b\d(?:[\s\-]?\d){12,18}\b/g;
 
 const IP_V4_RE = /\b(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g;
 
@@ -183,15 +183,22 @@ const PATTERNS: PatternEntry[] = [
 
 // ── Detection ───────────────────────────────────────────────────────────────
 
+/** Maximum text length for PII scanning to prevent DoS. */
+const MAX_SCAN_LENGTH = 1_000_000; // 1MB
+
 /**
  * Detect PII entities in text using regex patterns.
  * Returns an array of detections sorted by start position.
+ * Text longer than 1MB is truncated before scanning.
  */
 export function detectPII(
   text: string,
   options?: PIIDetectOptions,
 ): PIIDetection[] {
   if (!text) return [];
+
+  // Cap input length to prevent DoS via regex scanning
+  const scanText = text.length > MAX_SCAN_LENGTH ? text.slice(0, MAX_SCAN_LENGTH) : text;
 
   const allowedTypes = options?.types ? new Set(options.types) : null;
   const detections: PIIDetection[] = [];
@@ -203,7 +210,7 @@ export function detectPII(
     pattern.regex.lastIndex = 0;
 
     let match: RegExpExecArray | null;
-    while ((match = pattern.regex.exec(text)) !== null) {
+    while ((match = pattern.regex.exec(scanText)) !== null) {
       const value = match[0];
 
       // Run optional validation (e.g., Luhn for credit cards)

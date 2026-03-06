@@ -38,9 +38,12 @@ export class EventBatcher {
     }
 
     const batch = this.queue.splice(0, this.queue.length);
-    this.flushing = false;
 
-    await this.sendWithRetry(batch, 0);
+    try {
+      await this.sendWithRetry(batch, 0);
+    } finally {
+      this.flushing = false;
+    }
   }
 
   private async sendWithRetry(
