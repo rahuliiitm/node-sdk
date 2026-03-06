@@ -206,6 +206,64 @@ const lp = new LaunchPromptly({
 
 **Event types:** `pii.detected`, `pii.redacted`, `injection.detected`, `injection.blocked`, `cost.exceeded`, `content.violated`, `schema.invalid`, `model.blocked`
 
+## ML-Enhanced Detection (Optional)
+
+The core SDK uses regex and rule-based detection — zero dependencies, sub-millisecond. For higher accuracy on obfuscated attacks and nuanced content, opt in to local ML models:
+
+```bash
+npm install @huggingface/transformers
+```
+
+```typescript
+import { LaunchPromptly } from 'launchpromptly';
+import { MLToxicityDetector, MLInjectionDetector, MLPIIDetector } from 'launchpromptly/ml';
+
+// Load models (async — first run downloads from HuggingFace)
+const [toxicity, injection, pii] = await Promise.all([
+  MLToxicityDetector.create(),     // Xenova/toxic-bert (~170MB)
+  MLInjectionDetector.create(),    // protectai/deberta-v3 (~350MB)
+  MLPIIDetector.create(),          // Xenova/bert-base-NER (~170MB)
+]);
+
+const lp = new LaunchPromptly({
+  apiKey: process.env.LP_KEY,
+  security: {
+    pii: {
+      enabled: true,
+      redaction: 'placeholder',
+      providers: [pii],       // Adds NER: person names, orgs, locations
+    },
+    injection: {
+      enabled: true,
+      providers: [injection], // Semantic injection detection via DeBERTa
+    },
+    contentFilter: {
+      enabled: true,
+      providers: [toxicity],  // ML toxicity: hate speech, threats, obscenity
+    },
+  },
+});
+```
+
+### Layered Defense
+
+ML providers **merge with** the built-in regex/rule detectors — they don't replace them:
+
+| Layer | Speed | Catches | Dependencies |
+|-------|-------|---------|-------------|
+| **Layer 1: Regex/Rules** (always on) | <1ms | Obvious patterns — emails, SSNs, keyword injection | None |
+| **Layer 2: Local ML** (opt-in) | <100ms | Obfuscated attacks, person names, nuanced hate speech | `@huggingface/transformers` |
+
+All ML inference runs locally — no data leaves your infrastructure.
+
+### ML Detectors
+
+| Detector | Model | What it adds |
+|----------|-------|-------------|
+| `MLToxicityDetector` | `Xenova/toxic-bert` | Hate speech, threats, obscenity, identity attacks |
+| `MLInjectionDetector` | `protectai/deberta-v3-base-prompt-injection-v2` | Semantic prompt injection (catches obfuscated/encoded attacks) |
+| `MLPIIDetector` | `Xenova/bert-base-NER` | Person names, organization names, locations (NER) |
+
 ## Environment Variables
 
 | Variable | Description |
