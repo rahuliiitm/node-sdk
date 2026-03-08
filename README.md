@@ -44,6 +44,12 @@ await lp.flush(); // On server shutdown
 
 - **PII Redaction** — 16 built-in regex detectors (email, phone, SSN, credit card, IP, etc.) with pluggable ML providers
 - **Prompt Injection Detection** — Rule-based scoring across 5 attack categories with configurable thresholds
+- **Jailbreak Detection** — Catches role-play exploits, DAN prompts, and system prompt override attempts
+- **Prompt Leakage Detection** — Flags when the LLM accidentally echoes back system instructions or internal context
+- **Unicode Sanitizer** — Strips or blocks invisible characters, homoglyphs, and zero-width sequences used to bypass filters
+- **Secret/Credential Detection** — Catches API keys, tokens, passwords, and connection strings before they reach the LLM
+- **Topic Guard** — Block or warn when conversations drift into off-limits subjects you define
+- **Output Safety Scanning** — Scans LLM responses for harmful instructions, unsafe code patterns, and dangerous content
 - **Cost Guards** — Per-request, per-minute, per-hour, per-day, and per-customer budget limits
 - **Content Filtering** — Block or warn on hate speech, violence, self-harm, and custom patterns
 - **Model Policy** — Restrict which models, providers, and parameters are allowed
@@ -55,18 +61,35 @@ await lp.flush(); // On server shutdown
 
 ## Security Pipeline
 
-On every LLM call, the SDK runs these checks in order:
+On every LLM call, the SDK runs a 20-step pipeline split across pre-call and post-call phases:
 
-1. Cost guard (estimate cost, check budgets)
-2. PII scan & redact (replace PII with placeholders)
-3. Injection detection (score risk, warn/block)
-4. Content filter (check input policy violations)
-5. **LLM API Call** (with redacted content)
-6. Response PII scan (defense-in-depth)
-7. Response content filter
-8. Output schema validation
-9. De-redact response (restore original values)
-10. Send enriched event to dashboard
+**PRE-CALL:**
+
+1. Unicode Sanitizer — strip/warn/block invisible characters
+2. Model Policy Check — enforce allowed models and parameters
+3. Cost Guard Pre-Check — estimate cost, check budgets
+4. PII Detection (input) — scan for personal data
+5. PII Redaction (input) — replace PII with placeholders
+6. Secret Detection (input) — catch API keys, tokens, passwords
+7. Injection Detection — score risk, warn/block
+8. Jailbreak Detection — catch role-play exploits and system overrides
+9. Content Filter (input) — check policy violations
+10. Topic Guard — block off-limits subjects
+
+**>>> LLM API Call >>>**
+
+**POST-CALL:**
+
+11. Content Filter (output) — scan response for policy violations
+12. Output Safety Scan — check for harmful instructions or unsafe code
+13. Prompt Leakage Detection — flag leaked system prompts
+14. Schema Validation — enforce JSON structure
+15. Secret Detection (output) — catch credentials in response
+16. PII Detection (output) — defense-in-depth scan
+17. PII De-redaction — restore original values
+18. Cost Guard Post-Recording — track actual cost
+19. Event Batching — queue enriched event
+20. Guardrail Events — fire registered callbacks
 
 ## API
 
@@ -92,6 +115,12 @@ const wrapped = lp.wrap(new OpenAI(), {
   security: {
     pii: { enabled: true, redaction: 'placeholder' },
     injection: { enabled: true, blockOnHighRisk: true },
+    jailbreak: { enabled: true, blockOnDetect: true },
+    promptLeakage: { enabled: true },
+    unicodeSanitizer: { enabled: true, action: 'strip' },
+    secretDetection: { enabled: true, blockOnDetect: true },
+    topicGuard: { enabled: true, blockedTopics: ['politics', 'medical-advice'] },
+    outputSafety: { enabled: true, blockUnsafe: true },
     costGuard: { maxCostPerRequest: 1.00 },
     contentFilter: { enabled: true, categories: ['hate_speech', 'violence'] },
     modelPolicy: { allowedModels: ['gpt-4o', 'gpt-4o-mini'] },
@@ -148,6 +177,100 @@ const wrapped = lp.wrap(new OpenAI(), {
 }
 ```
 
+### Jailbreak Detection Options
+
+```typescript
+{
+  jailbreak: {
+    enabled: true,
+    blockOnDetect: true,       // throw JailbreakError on detection
+    sensitivity: 'medium',     // 'low' | 'medium' | 'high'
+    onDetect: (result) => log(result.technique),
+  }
+}
+```
+
+Catches DAN ("Do Anything Now") prompts, role-play exploits ("You are now EvilGPT"), system prompt override attempts, and similar jailbreak techniques. The detector runs pattern matching and structural analysis on the input.
+
+### Prompt Leakage Detection Options
+
+```typescript
+{
+  promptLeakage: {
+    enabled: true,
+    systemPrompt: 'You are a helpful assistant...',  // optional: provide for exact matching
+    sensitivity: 'medium',     // 'low' | 'medium' | 'high'
+    onDetect: (result) => log(result.leakedContent),
+  }
+}
+```
+
+Scans LLM output for signs that the model is echoing back system instructions, internal context, or tool definitions. If you provide the `systemPrompt`, the detector can do exact substring matching in addition to heuristic checks.
+
+### Unicode Sanitizer Options
+
+```typescript
+{
+  unicodeSanitizer: {
+    enabled: true,
+    action: 'strip',           // 'strip' | 'warn' | 'block'
+    allowEmoji: true,          // keep standard emoji (default: true)
+    onSuspicious: (result) => log(result.found),
+  }
+}
+```
+
+Detects and handles invisible characters (zero-width joiners, RTL overrides, homoglyphs, tag characters) that attackers use to sneak prompts past text-based filters. The `strip` action removes them silently, `warn` lets the request through but fires an event, and `block` rejects the request.
+
+### Secret Detection Options
+
+```typescript
+{
+  secretDetection: {
+    enabled: true,
+    blockOnDetect: true,       // throw SecretDetectedError
+    scanResponse: true,        // also scan LLM output (default: true)
+    types: ['api_key', 'aws_key', 'github_token', 'jwt', 'connection_string', 'private_key'],
+    onDetect: (secrets) => alert(secrets),
+  }
+}
+```
+
+Catches API keys, AWS credentials, GitHub tokens, JWTs, database connection strings, and private keys in both input and output. Uses pattern matching tuned to minimize false positives on normal text.
+
+### Topic Guard Options
+
+```typescript
+{
+  topicGuard: {
+    enabled: true,
+    blockedTopics: ['politics', 'medical-advice', 'legal-advice', 'financial-advice'],
+    action: 'block',           // 'block' | 'warn'
+    customTopics: [
+      { name: 'competitor-discussion', patterns: ['CompetitorCo', 'their product'] },
+    ],
+    onViolation: (result) => log(result.topic),
+  }
+}
+```
+
+Prevents the conversation from going into subjects you want to keep off-limits. Comes with built-in topic categories and supports custom topics defined by keyword patterns.
+
+### Output Safety Options
+
+```typescript
+{
+  outputSafety: {
+    enabled: true,
+    blockUnsafe: true,         // throw OutputSafetyError
+    categories: ['harmful_instructions', 'unsafe_code', 'dangerous_content'],
+    onDetect: (result) => log(result.category),
+  }
+}
+```
+
+Scans LLM responses for harmful instructions (e.g., "how to build a weapon"), unsafe code patterns (e.g., `eval()` with user input, SQL without parameterization), and other dangerous content. This is separate from content filtering -- content filters check for policy violations like hate speech, while output safety checks for responses that could cause real-world harm if followed.
+
 ### `lp.withContext(ctx, fn)`
 
 Propagate request context via AsyncLocalStorage.
@@ -169,10 +292,15 @@ await lp.withContext({ traceId: 'req-123', customerId: 'user-42' }, async () => 
 ```typescript
 import {
   PromptInjectionError,
+  JailbreakError,
   CostLimitError,
   ContentViolationError,
   ModelPolicyError,
   OutputSchemaError,
+  OutputSafetyError,
+  SecretDetectedError,
+  TopicViolationError,
+  UnicodeBlockError,
   StreamAbortError,
 } from 'launchpromptly';
 
@@ -181,10 +309,18 @@ try {
 } catch (err) {
   if (err instanceof PromptInjectionError) {
     // err.analysis — injection risk analysis
+  } else if (err instanceof JailbreakError) {
+    // err.technique — which jailbreak technique was detected
   } else if (err instanceof CostLimitError) {
     // err.violation — which budget was exceeded
   } else if (err instanceof ContentViolationError) {
     // err.violations — list of content policy violations
+  } else if (err instanceof SecretDetectedError) {
+    // err.secrets — list of detected secrets (types only, not values)
+  } else if (err instanceof TopicViolationError) {
+    // err.topic — which blocked topic was triggered
+  } else if (err instanceof OutputSafetyError) {
+    // err.category — what kind of unsafe content was found
   }
 }
 ```
@@ -200,11 +336,18 @@ const lp = new LaunchPromptly({
     'pii.detected': (e) => log('PII found', e.data),
     'injection.blocked': (e) => alert('Injection blocked', e.data),
     'cost.exceeded': (e) => alert('Budget exceeded', e.data),
+    'jailbreak.detected': (e) => log('Jailbreak attempt', e.data),
+    'jailbreak.blocked': (e) => alert('Jailbreak blocked', e.data),
+    'unicode.suspicious': (e) => log('Suspicious unicode', e.data),
+    'secret.detected': (e) => alert('Secret found in text', e.data),
+    'topic.violated': (e) => log('Off-limits topic', e.data),
+    'output.unsafe': (e) => alert('Unsafe output detected', e.data),
+    'prompt.leaked': (e) => alert('System prompt leaked', e.data),
   },
 });
 ```
 
-**Event types:** `pii.detected`, `pii.redacted`, `injection.detected`, `injection.blocked`, `cost.exceeded`, `content.violated`, `schema.invalid`, `model.blocked`
+**Event types:** `pii.detected`, `pii.redacted`, `injection.detected`, `injection.blocked`, `jailbreak.detected`, `jailbreak.blocked`, `unicode.suspicious`, `secret.detected`, `topic.violated`, `output.unsafe`, `prompt.leaked`, `cost.exceeded`, `content.violated`, `schema.invalid`, `model.blocked`
 
 ## ML-Enhanced Detection (Optional)
 

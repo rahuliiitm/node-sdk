@@ -84,9 +84,41 @@ describe('PII Detection', () => {
     });
 
     it('detects SSN in context', () => {
-      const result = detectPII('My social security number is 987-65-4321');
+      const result = detectPII('My social security number is 078-05-1120');
       const ssns = result.filter((d) => d.type === 'ssn');
       expect(ssns).toHaveLength(1);
+    });
+
+    it('detects SSN without separators', () => {
+      const result = detectPII('SSN: 123456789');
+      const ssns = result.filter((d) => d.type === 'ssn');
+      expect(ssns).toHaveLength(1);
+      expect(ssns[0].value).toBe('123456789');
+    });
+
+    it('detects SSN with spaces', () => {
+      const result = detectPII('SSN: 123 45 6789');
+      const ssns = result.filter((d) => d.type === 'ssn');
+      expect(ssns).toHaveLength(1);
+      expect(ssns[0].value).toBe('123 45 6789');
+    });
+
+    it('rejects invalid SSN with area 000', () => {
+      const result = detectPII('SSN: 000-12-3456');
+      const ssns = result.filter((d) => d.type === 'ssn');
+      expect(ssns).toHaveLength(0);
+    });
+
+    it('rejects invalid SSN with area 666', () => {
+      const result = detectPII('SSN: 666-12-3456');
+      const ssns = result.filter((d) => d.type === 'ssn');
+      expect(ssns).toHaveLength(0);
+    });
+
+    it('rejects invalid SSN with area 9xx', () => {
+      const result = detectPII('SSN: 900-12-3456');
+      const ssns = result.filter((d) => d.type === 'ssn');
+      expect(ssns).toHaveLength(0);
     });
   });
 

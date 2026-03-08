@@ -97,6 +97,27 @@ const RULES: InjectionRule[] = [
   },
 ];
 
+// ── Unicode / homoglyph normalization ────────────────────────────────────────
+
+const HOMOGLYPH_MAP: Record<string, string> = {
+  '\u0410': 'A', '\u0430': 'a', '\u0412': 'B', '\u0435': 'e',
+  '\u041D': 'H', '\u043E': 'o', '\u0440': 'p', '\u0441': 'c',
+  '\u0443': 'y', '\u0422': 'T', '\u0445': 'x', '\u041C': 'M',
+  '\u043A': 'k', '\u0456': 'i',
+  '\u0391': 'A', '\u0392': 'B', '\u0395': 'E', '\u0397': 'H',
+  '\u0399': 'I', '\u039A': 'K', '\u039C': 'M', '\u039D': 'N',
+  '\u039F': 'O', '\u03A1': 'P', '\u03A4': 'T', '\u03A5': 'Y',
+  '\u03B1': 'a', '\u03BF': 'o', '\u03C1': 'p',
+};
+
+function normalizeText(text: string): string {
+  let normalized = text.normalize('NFKC');
+  for (const [glyph, ascii] of Object.entries(HOMOGLYPH_MAP)) {
+    normalized = normalized.replaceAll(glyph, ascii);
+  }
+  return normalized;
+}
+
 // ── Detection ───────────────────────────────────────────────────────────────
 
 /** Maximum text length for injection scanning to prevent DoS. */
@@ -117,6 +138,7 @@ export function detectInjection(
 
   // Cap input length to prevent DoS
   const scanText = text.length > MAX_INJECTION_SCAN_LENGTH ? text.slice(0, MAX_INJECTION_SCAN_LENGTH) : text;
+  const normalizedText = normalizeText(scanText);
 
   const warnThreshold = options?.warnThreshold ?? 0.3;
   const blockThreshold = options?.blockThreshold ?? 0.7;
@@ -132,7 +154,7 @@ export function detectInjection(
       // Reset lastIndex for global patterns
       if (pattern.global) pattern.lastIndex = 0;
 
-      if (pattern.test(scanText)) {
+      if (pattern.test(normalizedText)) {
         ruleTriggered = true;
         matchCount++;
       }

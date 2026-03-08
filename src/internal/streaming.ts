@@ -6,11 +6,17 @@
 
 import { detectPII, mergeDetections, type PIIDetection, type PIIDetectOptions, type PIIDetectorProvider } from './pii';
 import { detectInjection, type InjectionAnalysis } from './injection';
-import type { StreamGuardOptions, StreamViolation } from '../types';
+import { detectSecrets, type SecretDetection, type SecretDetectionOptions } from './secret-detection';
+import { scanOutputSafety, type OutputSafetyThreat, type OutputSafetyOptions } from './output-safety';
+import { detectPromptLeakage, type PromptLeakageResult, type PromptLeakageOptions } from './prompt-leakage';
+import type { GuardrailEventType, StreamGuardOptions, StreamViolation } from '../types';
 
 export interface StreamSecurityReport {
   piiDetections: PIIDetection[];
   injectionRisk?: InjectionAnalysis;
+  secretDetections: SecretDetection[];
+  outputSafetyThreats: OutputSafetyThreat[];
+  promptLeakageResult?: PromptLeakageResult;
   responseText: string;
   /** Violations detected during mid-stream scanning. */
   streamViolations: StreamViolation[];
@@ -60,6 +66,8 @@ export function createSecurityStream<T>(
 ): SecurityStreamResult<T> {
   let report: StreamSecurityReport = {
     piiDetections: [],
+    secretDetections: [],
+    outputSafetyThreats: [],
     responseText: '',
     streamViolations: [],
     aborted: false,
@@ -122,6 +130,8 @@ export function createSecurityStream<T>(
         // Return partial report if stream hasn't completed
         return {
           piiDetections: [],
+          secretDetections: [],
+          outputSafetyThreats: [],
           responseText: '',
           streamViolations: [],
           aborted: false,
@@ -148,7 +158,12 @@ export interface StreamGuardEngineConfig<T> {
   injection?: {
     blockThreshold?: number;
   };
+  secretDetection?: SecretDetectionOptions;
+  outputSafety?: OutputSafetyOptions;
+  promptLeakage?: PromptLeakageOptions;
   extractText: (chunk: T) => string | null;
+  /** Optional callback to emit guardrail events during scanning. */
+  emit?: (type: GuardrailEventType, data: Record<string, unknown>) => void;
 }
 
 /**
@@ -168,7 +183,14 @@ export class StreamGuardEngine<T> {
   private readonly maxResponseLength?: { maxChars?: number; maxWords?: number };
   private readonly piiConfig?: { types?: PIIDetectOptions['types']; providers?: PIIDetectorProvider[] };
   private readonly injectionConfig?: { blockThreshold?: number };
+  private readonly secretDetectionConfig?: SecretDetectionOptions;
+  private readonly outputSafetyConfig?: OutputSafetyOptions;
+  private readonly promptLeakageConfig?: PromptLeakageOptions;
+  private readonly doSecretScan: boolean;
+  private readonly doOutputSafetyScan: boolean;
+  private readonly doPromptLeakageScan: boolean;
   private readonly extractText: (chunk: T) => string | null;
+  private readonly emitEvent?: (type: GuardrailEventType, data: Record<string, unknown>) => void;
 
   // State
   private buffer = '';
@@ -178,6 +200,9 @@ export class StreamGuardEngine<T> {
   private aborted = false;
   private violations: StreamViolation[] = [];
   private report: StreamSecurityReport | null = null;
+  private _finalSecrets: SecretDetection[] = [];
+  private _finalOutputSafety: OutputSafetyThreat[] = [];
+  private _finalPromptLeakage?: PromptLeakageResult;
 
   constructor(config: StreamGuardEngineConfig<T>) {
     const sg = config.streamGuard;
@@ -192,7 +217,14 @@ export class StreamGuardEngine<T> {
     this.maxResponseLength = sg.maxResponseLength;
     this.piiConfig = config.pii;
     this.injectionConfig = config.injection;
+    this.secretDetectionConfig = config.secretDetection;
+    this.outputSafetyConfig = config.outputSafety;
+    this.promptLeakageConfig = config.promptLeakage;
+    this.doSecretScan = !!config.secretDetection;
+    this.doOutputSafetyScan = !!config.outputSafety;
+    this.doPromptLeakageScan = !!config.promptLeakage;
     this.extractText = config.extractText;
+    this.emitEvent = config.emit;
   }
 
   /** Wrap a source async iterable into a guarded stream. */
@@ -337,6 +369,34 @@ export class StreamGuardEngine<T> {
       }
     }
 
+    // Secret detection scan on window
+    if (this.doSecretScan) {
+      const secrets = detectSecrets(scanText, this.secretDetectionConfig);
+      if (secrets.length > 0) {
+        this.emitEvent?.('secret.detected', { detections: secrets, direction: 'output' });
+        this._handleViolation({
+          type: 'pii', // grouped under pii violation type for stream abort logic
+          offset: this.windowStart + secrets[0].start,
+          details: secrets,
+          timestamp: Date.now(),
+        });
+      }
+    }
+
+    // Output safety scan on window
+    if (this.doOutputSafetyScan) {
+      const threats = scanOutputSafety(scanText, this.outputSafetyConfig);
+      if (threats.length > 0) {
+        this.emitEvent?.('output.unsafe', { threats });
+        this._handleViolation({
+          type: 'injection', // grouped under injection for stream abort logic
+          offset: this.windowStart,
+          details: threats,
+          timestamp: Date.now(),
+        });
+      }
+    }
+
     // Slide window forward, keeping overlap
     if (this.buffer.length > this.windowOverlap) {
       this.windowStart = this.buffer.length - this.windowOverlap;
@@ -381,6 +441,30 @@ export class StreamGuardEngine<T> {
         });
       }
     }
+
+    // Full-text secret detection scan
+    if (this.doSecretScan) {
+      this._finalSecrets = detectSecrets(fullText, this.secretDetectionConfig);
+      if (this._finalSecrets.length > 0) {
+        this.emitEvent?.('secret.detected', { detections: this._finalSecrets, direction: 'output' });
+      }
+    }
+
+    // Full-text output safety scan
+    if (this.doOutputSafetyScan) {
+      this._finalOutputSafety = scanOutputSafety(fullText, this.outputSafetyConfig);
+      if (this._finalOutputSafety.length > 0) {
+        this.emitEvent?.('output.unsafe', { threats: this._finalOutputSafety });
+      }
+    }
+
+    // Full-text prompt leakage scan (final only — needs complete output)
+    if (this.doPromptLeakageScan && this.promptLeakageConfig) {
+      this._finalPromptLeakage = detectPromptLeakage(fullText, this.promptLeakageConfig);
+      if (this._finalPromptLeakage.leaked) {
+        this.emitEvent?.('prompt.leaked', { result: this._finalPromptLeakage });
+      }
+    }
   }
 
   private _handleViolation(violation: StreamViolation): void {
@@ -413,6 +497,9 @@ export class StreamGuardEngine<T> {
     this.report = {
       piiDetections: allPiiDetections,
       injectionRisk,
+      secretDetections: this._finalSecrets,
+      outputSafetyThreats: this._finalOutputSafety,
+      promptLeakageResult: this._finalPromptLeakage,
       responseText: this.buffer,
       streamViolations: [...this.violations],
       aborted: this.aborted,

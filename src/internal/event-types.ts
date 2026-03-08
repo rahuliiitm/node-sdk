@@ -51,6 +51,39 @@ export interface IngestEventPayload {
     approximateOutputTokens: number;
     responseLength: number;
   };
+  jailbreakRisk?: {
+    score: number;
+    triggered: string[];
+    action: 'allow' | 'warn' | 'block';
+    decodedPayloads?: string[];
+  };
+  unicodeThreats?: {
+    found: boolean;
+    threatCount: number;
+    threatTypes: string[];
+    action: 'strip' | 'warn' | 'block';
+  };
+  secretDetections?: {
+    inputCount: number;
+    outputCount: number;
+    types: string[];
+  };
+  topicViolation?: {
+    type: 'off_topic' | 'blocked_topic';
+    topic?: string;
+    matchedKeywords: string[];
+    score: number;
+  };
+  outputSafety?: {
+    threatCount: number;
+    categories: string[];
+    threats: Array<{ category: string; matched: string; severity: string }>;
+  };
+  promptLeakage?: {
+    leaked: boolean;
+    similarity: number;
+    metaResponseDetected: boolean;
+  };
 }
 
 /**

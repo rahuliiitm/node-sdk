@@ -457,6 +457,8 @@ export function wrapGeminiClient<T extends object>(
                     getStreamReport = () => ({
                       piiDetections: streamPiiDetections,
                       injectionRisk: undefined,
+                      secretDetections: [],
+                      outputSafetyThreats: [],
                       responseText: contentParts.join(''),
                       streamViolations: [],
                       aborted: false,

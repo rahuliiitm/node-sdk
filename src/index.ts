@@ -7,6 +7,12 @@ export type {
   SecurityOptions,
   PIISecurityOptions,
   InjectionSecurityOptions,
+  JailbreakSecurityOptions,
+  UnicodeSanitizerSecurityOptions,
+  SecretDetectionSecurityOptions,
+  TopicGuardSecurityOptions,
+  OutputSafetySecurityOptions,
+  PromptLeakageSecurityOptions,
   StreamGuardOptions,
   MaxResponseLength,
   StreamViolation,
@@ -23,6 +29,8 @@ export {
   ModelPolicyError,
   OutputSchemaError,
   StreamAbortError,
+  JailbreakError,
+  TopicViolationError,
 } from './errors';
 
 // Security modules — public API
@@ -66,6 +74,44 @@ export type {
   OutputSchemaOptions,
   SchemaValidationError as SchemaError,
 } from './internal/schema-validator';
+
+export { detectJailbreak, mergeJailbreakAnalyses, RuleJailbreakDetector } from './internal/jailbreak';
+export type {
+  JailbreakAnalysis,
+  JailbreakOptions,
+  JailbreakDetectorProvider,
+} from './internal/jailbreak';
+
+export { detectPromptLeakage } from './internal/prompt-leakage';
+export type { PromptLeakageOptions, PromptLeakageResult } from './internal/prompt-leakage';
+
+export { scanUnicode } from './internal/unicode-sanitizer';
+export type {
+  UnicodeSanitizeOptions,
+  UnicodeScanResult,
+  UnicodeThreat,
+} from './internal/unicode-sanitizer';
+
+export { detectSecrets } from './internal/secret-detection';
+export type {
+  SecretDetectionOptions,
+  CustomSecretPattern,
+  SecretDetection,
+} from './internal/secret-detection';
+
+export { checkTopicGuard } from './internal/topic-guard';
+export type {
+  TopicGuardOptions,
+  TopicDefinition,
+  TopicViolation,
+} from './internal/topic-guard';
+
+export { detectOutputThreats } from './internal/output-safety';
+export type {
+  OutputSafetyOptions,
+  OutputSafetyCategory,
+  OutputSafetyThreat,
+} from './internal/output-safety';
 
 export { createSecurityStream } from './internal/streaming';
 export type {

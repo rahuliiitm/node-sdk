@@ -4,8 +4,10 @@
 
 import type { BudgetViolation } from './internal/cost-guard';
 import type { InjectionAnalysis } from './internal/injection';
+import type { JailbreakAnalysis } from './internal/jailbreak';
 import type { ContentViolation } from './internal/content-filter';
 import type { ModelPolicyViolation } from './internal/model-policy';
+import type { TopicViolation } from './internal/topic-guard';
 import type { StreamViolation } from './types';
 import type { SchemaValidationError as SchemaError } from './internal/schema-validator';
 
@@ -64,6 +66,30 @@ export class OutputSchemaError extends Error {
     this.name = 'OutputSchemaError';
     this.validationErrors = validationErrors;
     this.responseText = responseText;
+  }
+}
+
+export class JailbreakError extends Error {
+  readonly analysis: JailbreakAnalysis;
+
+  constructor(analysis: JailbreakAnalysis) {
+    super(
+      `Jailbreak detected (risk: ${analysis.riskScore}, categories: ${analysis.triggered.join(', ')})`,
+    );
+    this.name = 'JailbreakError';
+    this.analysis = analysis;
+  }
+}
+
+export class TopicViolationError extends Error {
+  readonly violation: TopicViolation;
+
+  constructor(violation: TopicViolation) {
+    super(
+      `Topic violation: ${violation.type}${violation.topic ? ` — ${violation.topic}` : ''}`,
+    );
+    this.name = 'TopicViolationError';
+    this.violation = violation;
   }
 }
 

@@ -50,7 +50,7 @@ const PHONE_US_RE =
 
 const PHONE_INTL_RE = /(?<=^|[\s(])\+\d{1,3}[-.\s]?\d{4,14}(?:[-.\s]\d{1,6})*\b/g;
 
-const SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/g;
+const SSN_RE = /\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b/g;
 
 const CREDIT_CARD_RE = /\b\d(?:[\s\-]?\d){12,18}\b/g;
 
@@ -120,6 +120,20 @@ function aadhaarCheck(this: void, match: string, fullText?: string, matchIndex?:
   return true;
 }
 
+// ── SSN validation (area / group / serial rules) ────────────────────────────
+
+function ssnCheck(match: string): boolean {
+  const digits = match.replace(/[-\s]/g, '');
+  if (digits.length !== 9) return false;
+  const area = parseInt(digits.slice(0, 3), 10);
+  const group = parseInt(digits.slice(3, 5), 10);
+  const serial = parseInt(digits.slice(5, 9), 10);
+  if (area === 0 || area === 666 || area >= 900) return false;
+  if (group === 0) return false;
+  if (serial === 0) return false;
+  return true;
+}
+
 // ── Well-known non-PII IP addresses (reduce false positives) ────────────────
 
 const WELL_KNOWN_IPS = new Set([
@@ -145,7 +159,7 @@ const PATTERNS: PatternEntry[] = [
   { type: 'email', regex: EMAIL_RE, confidence: 0.95 },
   { type: 'phone', regex: PHONE_US_RE, confidence: 0.85 },
   { type: 'phone', regex: PHONE_INTL_RE, confidence: 0.8 },
-  { type: 'ssn', regex: SSN_RE, confidence: 0.95 },
+  { type: 'ssn', regex: SSN_RE, confidence: 0.95, validate: ssnCheck },
   {
     type: 'credit_card',
     regex: CREDIT_CARD_RE,

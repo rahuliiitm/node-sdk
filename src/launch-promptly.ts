@@ -11,7 +11,13 @@ import { createSecurityStream, StreamGuardEngine, extractChunkContent } from './
 import type { StreamSecurityReport } from './internal/streaming';
 import { checkModelPolicy } from './internal/model-policy';
 import { validateOutputSchema } from './internal/schema-validator';
-import { PromptInjectionError, CostLimitError, ContentViolationError, ModelPolicyError, OutputSchemaError, StreamAbortError } from './errors';
+import { scanUnicode, type UnicodeScanResult } from './internal/unicode-sanitizer';
+import { detectSecrets, type SecretDetection } from './internal/secret-detection';
+import { detectJailbreak, mergeJailbreakAnalyses, type JailbreakAnalysis } from './internal/jailbreak';
+import { checkTopicGuard, type TopicViolation } from './internal/topic-guard';
+import { scanOutputSafety, type OutputSafetyThreat } from './internal/output-safety';
+import { detectPromptLeakage, type PromptLeakageResult } from './internal/prompt-leakage';
+import { PromptInjectionError, CostLimitError, ContentViolationError, ModelPolicyError, OutputSchemaError, StreamAbortError, JailbreakError, TopicViolationError } from './errors';
 import { wrapAnthropicClient } from './providers/anthropic';
 import { wrapGeminiClient } from './providers/gemini';
 import type {
@@ -294,12 +300,56 @@ export class LaunchPromptly {
                         let outputContentViolations: ContentViolation[] = [];
                         const redactionMapping = new Map<string, string>();
                         let redactionApplied = false;
+                        let jailbreakResult: JailbreakAnalysis | null = null;
+                        let unicodeScanResult: UnicodeScanResult | null = null;
+                        let inputSecretDetections: SecretDetection[] = [];
+                        let outputSecretDetections: SecretDetection[] = [];
+                        let topicViolationResult: TopicViolation | null = null;
+                        let outputSafetyThreats: OutputSafetyThreat[] = [];
+                        let promptLeakageResult: PromptLeakageResult | null = null;
 
                         // Build a mutable copy of params for potential message redaction
                         let effectiveParams = params;
 
                         if (security) {
-                          // 0. Model policy enforcement (first check)
+                          // 0a. Unicode sanitizer (must run first — clean input for all downstream)
+                          if (security.unicodeSanitizer?.enabled !== false && security.unicodeSanitizer) {
+                            const allInput = effectiveParams.messages.map((m) => m.content).join('\n');
+                            unicodeScanResult = scanUnicode(allInput, {
+                              action: security.unicodeSanitizer.action,
+                              detectHomoglyphs: security.unicodeSanitizer.detectHomoglyphs,
+                            });
+
+                            if (unicodeScanResult.found) {
+                              emit('unicode.suspicious', { result: unicodeScanResult });
+                              security.unicodeSanitizer.onDetect?.(unicodeScanResult);
+
+                              if (security.unicodeSanitizer.action === 'block') {
+                                throw new Error(
+                                  `Unicode threat detected: ${unicodeScanResult.threats.length} suspicious characters found`,
+                                );
+                              }
+
+                              // If action is 'strip', replace message content with sanitized text
+                              if (security.unicodeSanitizer.action === 'strip' && unicodeScanResult.sanitizedText != null) {
+                                // Re-scan each message individually to get per-message sanitized text
+                                const sanitizedMessages: typeof effectiveParams.messages = [];
+                                for (const msg of effectiveParams.messages) {
+                                  const msgScan = scanUnicode(msg.content, {
+                                    action: 'strip',
+                                    detectHomoglyphs: security.unicodeSanitizer.detectHomoglyphs,
+                                  });
+                                  sanitizedMessages.push({
+                                    ...msg,
+                                    content: msgScan.sanitizedText ?? msg.content,
+                                  });
+                                }
+                                effectiveParams = { ...effectiveParams, messages: sanitizedMessages };
+                              }
+                            }
+                          }
+
+                          // 0b. Model policy enforcement
                           if (security.modelPolicy) {
                             const violation = checkModelPolicy(params, security.modelPolicy);
                             if (violation) {
@@ -393,6 +443,26 @@ export class LaunchPromptly {
                             }
                           }
 
+                          // 3b. Secret detection (input)
+                          if (security.secretDetection?.enabled !== false && security.secretDetection) {
+                            const allInput = effectiveParams.messages.map((m) => m.content).join('\n');
+                            inputSecretDetections = detectSecrets(allInput, {
+                              builtInPatterns: security.secretDetection.builtInPatterns,
+                              customPatterns: security.secretDetection.customPatterns,
+                            });
+
+                            if (inputSecretDetections.length > 0) {
+                              emit('secret.detected', { detections: inputSecretDetections, direction: 'input' });
+                              security.secretDetection.onDetect?.(inputSecretDetections);
+
+                              if (security.secretDetection.action === 'block') {
+                                throw new Error(
+                                  `Secrets detected in input: ${inputSecretDetections.map((d) => d.type).join(', ')}`,
+                                );
+                              }
+                            }
+                          }
+
                           // 4. Injection detection
                           if (security.injection?.enabled !== false) {
                             // Scan user messages AND tool/function results (untrusted external input)
@@ -435,6 +505,46 @@ export class LaunchPromptly {
                             }
                           }
 
+                          // 4b. Jailbreak detection
+                          if (security.jailbreak?.enabled !== false && security.jailbreak) {
+                            const userMessages = params.messages
+                              .filter((m) => m.role === 'user' || m.role === 'tool' || m.role === 'function')
+                              .map((m) => m.content)
+                              .join('\n');
+
+                            if (userMessages) {
+                              jailbreakResult = detectJailbreak(userMessages, {
+                                blockThreshold: security.jailbreak.blockThreshold,
+                                warnThreshold: security.jailbreak.warnThreshold,
+                              });
+
+                              // Merge with ML providers
+                              if (security.jailbreak.providers?.length) {
+                                const providerResults = await Promise.all(security.jailbreak.providers.map(async (p) => {
+                                  try { return await Promise.resolve(p.detect(userMessages)); }
+                                  catch { return { riskScore: 0, triggered: [] as string[], action: 'allow' as const }; }
+                                }));
+                                jailbreakResult = mergeJailbreakAnalyses(
+                                  [jailbreakResult, ...providerResults],
+                                  { blockThreshold: security.jailbreak.blockThreshold },
+                                );
+                              }
+
+                              if (jailbreakResult.riskScore > 0) {
+                                emit('jailbreak.detected', { analysis: jailbreakResult });
+                                security.jailbreak.onDetect?.(jailbreakResult);
+                              }
+
+                              if (
+                                security.jailbreak.blockOnDetection !== false &&
+                                jailbreakResult.action === 'block'
+                              ) {
+                                emit('jailbreak.blocked', { analysis: jailbreakResult });
+                                throw new JailbreakError(jailbreakResult);
+                              }
+                            }
+                          }
+
                           // 5. Content filter
                           if (security.contentFilter?.enabled !== false && security.contentFilter) {
                             const allInput = params.messages.map((m) => m.content).join('\n');
@@ -457,6 +567,24 @@ export class LaunchPromptly {
                             if (inputContentViolations.length > 0) {
                               for (const v of inputContentViolations) {
                                 security.contentFilter.onViolation?.(v);
+                              }
+                            }
+                          }
+
+                          // 6. Topic guard
+                          if (security.topicGuard?.enabled !== false && security.topicGuard) {
+                            const allInput = effectiveParams.messages.map((m) => m.content).join('\n');
+                            topicViolationResult = checkTopicGuard(allInput, {
+                              allowedTopics: security.topicGuard.allowedTopics,
+                              blockedTopics: security.topicGuard.blockedTopics,
+                            });
+
+                            if (topicViolationResult) {
+                              emit('topic.violated', { violation: topicViolationResult });
+                              security.topicGuard.onViolation?.(topicViolationResult);
+
+                              if (security.topicGuard.action !== 'warn') {
+                                throw new TopicViolationError(topicViolationResult);
                               }
                             }
                           }
@@ -485,7 +613,19 @@ export class LaunchPromptly {
                               injection: security.injection ? {
                                 blockThreshold: security.injection.blockThreshold,
                               } : undefined,
+                              secretDetection: security.secretDetection?.enabled !== false && security.secretDetection ? {
+                                builtInPatterns: security.secretDetection.builtInPatterns,
+                                customPatterns: security.secretDetection.customPatterns,
+                              } : undefined,
+                              outputSafety: security.outputSafety?.enabled !== false && security.outputSafety ? {
+                                categories: security.outputSafety.categories,
+                              } : undefined,
+                              promptLeakage: security.promptLeakage?.enabled !== false && security.promptLeakage ? {
+                                systemPrompt: security.promptLeakage.systemPrompt,
+                                threshold: security.promptLeakage.threshold,
+                              } : undefined,
                               extractText: extractChunkContent,
+                              emit,
                             });
                             const guarded = engine.wrap(streamResult as AsyncIterable<any>);
                             outputStream = guarded;
@@ -597,6 +737,67 @@ export class LaunchPromptly {
                                       responseLength: report.responseLength,
                                     };
                                   }
+
+                                  // Pre-call metadata from new guardrails
+                                  if (jailbreakResult && jailbreakResult.riskScore > 0) {
+                                    event.jailbreakRisk = {
+                                      score: jailbreakResult.riskScore,
+                                      triggered: jailbreakResult.triggered,
+                                      action: jailbreakResult.action,
+                                      decodedPayloads: jailbreakResult.decodedPayloads,
+                                    };
+                                  }
+
+                                  if (unicodeScanResult?.found) {
+                                    event.unicodeThreats = {
+                                      found: true,
+                                      threatCount: unicodeScanResult.threats.length,
+                                      threatTypes: [...new Set(unicodeScanResult.threats.map((t) => t.type))],
+                                      action: security.unicodeSanitizer?.action ?? 'strip',
+                                    };
+                                  }
+
+                                  const streamSecrets = report.secretDetections ?? [];
+                                  if (inputSecretDetections.length > 0 || streamSecrets.length > 0) {
+                                    event.secretDetections = {
+                                      inputCount: inputSecretDetections.length,
+                                      outputCount: streamSecrets.length,
+                                      types: [...new Set([
+                                        ...inputSecretDetections.map((d) => d.type),
+                                        ...streamSecrets.map((d) => d.type),
+                                      ])],
+                                    };
+                                  }
+
+                                  if (topicViolationResult) {
+                                    event.topicViolation = {
+                                      type: topicViolationResult.type,
+                                      topic: topicViolationResult.topic,
+                                      matchedKeywords: topicViolationResult.matchedKeywords,
+                                      score: topicViolationResult.score,
+                                    };
+                                  }
+
+                                  const streamSafetyThreats = report.outputSafetyThreats ?? [];
+                                  if (streamSafetyThreats.length > 0) {
+                                    event.outputSafety = {
+                                      threatCount: streamSafetyThreats.length,
+                                      categories: [...new Set(streamSafetyThreats.map((t) => t.category))],
+                                      threats: streamSafetyThreats.map((t) => ({
+                                        category: t.category,
+                                        matched: t.matched,
+                                        severity: t.severity,
+                                      })),
+                                    };
+                                  }
+
+                                  if (report.promptLeakageResult?.leaked) {
+                                    event.promptLeakage = {
+                                      leaked: true,
+                                      similarity: report.promptLeakageResult.similarity,
+                                      metaResponseDetected: report.promptLeakageResult.metaResponseDetected,
+                                    };
+                                  }
                                 }
 
                                 batcher.enqueue(event);
@@ -659,6 +860,56 @@ export class LaunchPromptly {
                             );
                             if (outputContentViolations.length > 0) {
                               emit('content.violated', { violations: outputContentViolations, direction: 'output' });
+                            }
+                          }
+
+                          // Post-call: output safety scan
+                          if (security.outputSafety?.enabled !== false && security.outputSafety && responseText) {
+                            outputSafetyThreats = scanOutputSafety(responseText, {
+                              categories: security.outputSafety.categories,
+                            });
+
+                            if (outputSafetyThreats.length > 0) {
+                              emit('output.unsafe', { threats: outputSafetyThreats });
+                              security.outputSafety.onDetect?.(outputSafetyThreats);
+
+                              if (security.outputSafety.action === 'block') {
+                                throw new Error(
+                                  `Unsafe output detected: ${outputSafetyThreats.map((t) => t.category).join(', ')}`,
+                                );
+                              }
+                            }
+                          }
+
+                          // Post-call: prompt leakage detection
+                          if (security.promptLeakage?.enabled !== false && security.promptLeakage && responseText) {
+                            promptLeakageResult = detectPromptLeakage(responseText, {
+                              systemPrompt: security.promptLeakage.systemPrompt,
+                              threshold: security.promptLeakage.threshold,
+                            });
+
+                            if (promptLeakageResult.leaked) {
+                              emit('prompt.leaked', { result: promptLeakageResult });
+                              security.promptLeakage.onDetect?.(promptLeakageResult);
+
+                              if (security.promptLeakage.blockOnLeak) {
+                                throw new Error(
+                                  `System prompt leakage detected (similarity: ${promptLeakageResult.similarity.toFixed(2)})`,
+                                );
+                              }
+                            }
+                          }
+
+                          // Post-call: secret detection (output)
+                          if (security.secretDetection?.enabled !== false && security.secretDetection?.scanResponse !== false && security.secretDetection && responseText) {
+                            outputSecretDetections = detectSecrets(responseText, {
+                              builtInPatterns: security.secretDetection.builtInPatterns,
+                              customPatterns: security.secretDetection.customPatterns,
+                            });
+
+                            if (outputSecretDetections.length > 0) {
+                              emit('secret.detected', { detections: outputSecretDetections, direction: 'output' });
+                              security.secretDetection.onDetect?.(outputSecretDetections);
                             }
                           }
 
@@ -816,6 +1067,64 @@ export class LaunchPromptly {
                                       costGuard.getCurrentHourSpend(),
                                   ),
                                   limitTriggered: costViolation?.type,
+                                };
+                              }
+
+                              if (jailbreakResult && jailbreakResult.riskScore > 0) {
+                                event.jailbreakRisk = {
+                                  score: jailbreakResult.riskScore,
+                                  triggered: jailbreakResult.triggered,
+                                  action: jailbreakResult.action,
+                                  decodedPayloads: jailbreakResult.decodedPayloads,
+                                };
+                              }
+
+                              if (unicodeScanResult?.found) {
+                                event.unicodeThreats = {
+                                  found: true,
+                                  threatCount: unicodeScanResult.threats.length,
+                                  threatTypes: [...new Set(unicodeScanResult.threats.map((t) => t.type))],
+                                  action: security.unicodeSanitizer?.action ?? 'strip',
+                                };
+                              }
+
+                              if (inputSecretDetections.length > 0 || outputSecretDetections.length > 0) {
+                                event.secretDetections = {
+                                  inputCount: inputSecretDetections.length,
+                                  outputCount: outputSecretDetections.length,
+                                  types: [...new Set([
+                                    ...inputSecretDetections.map((d) => d.type),
+                                    ...outputSecretDetections.map((d) => d.type),
+                                  ])],
+                                };
+                              }
+
+                              if (topicViolationResult) {
+                                event.topicViolation = {
+                                  type: topicViolationResult.type,
+                                  topic: topicViolationResult.topic,
+                                  matchedKeywords: topicViolationResult.matchedKeywords,
+                                  score: topicViolationResult.score,
+                                };
+                              }
+
+                              if (outputSafetyThreats.length > 0) {
+                                event.outputSafety = {
+                                  threatCount: outputSafetyThreats.length,
+                                  categories: [...new Set(outputSafetyThreats.map((t) => t.category))],
+                                  threats: outputSafetyThreats.map((t) => ({
+                                    category: t.category,
+                                    matched: t.matched,
+                                    severity: t.severity,
+                                  })),
+                                };
+                              }
+
+                              if (promptLeakageResult?.leaked) {
+                                event.promptLeakage = {
+                                  leaked: true,
+                                  similarity: promptLeakageResult.similarity,
+                                  metaResponseDetected: promptLeakageResult.metaResponseDetected,
                                 };
                               }
                             }

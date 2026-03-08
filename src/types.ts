@@ -24,14 +24,68 @@ export interface WrapOptions {
 export interface SecurityOptions {
   pii?: PIISecurityOptions;
   injection?: InjectionSecurityOptions;
+  jailbreak?: JailbreakSecurityOptions;
   costGuard?: import('./internal/cost-guard').CostGuardOptions;
   contentFilter?: import('./internal/content-filter').ContentFilterOptions;
   modelPolicy?: import('./internal/model-policy').ModelPolicyOptions;
   streamGuard?: StreamGuardOptions;
   outputSchema?: import('./internal/schema-validator').OutputSchemaOptions;
+  unicodeSanitizer?: UnicodeSanitizerSecurityOptions;
+  secretDetection?: SecretDetectionSecurityOptions;
+  topicGuard?: TopicGuardSecurityOptions;
+  outputSafety?: OutputSafetySecurityOptions;
+  promptLeakage?: PromptLeakageSecurityOptions;
   audit?: {
     logLevel?: 'none' | 'summary' | 'detailed';
   };
+}
+
+export interface JailbreakSecurityOptions {
+  enabled?: boolean;
+  blockThreshold?: number;
+  warnThreshold?: number;
+  blockOnDetection?: boolean;
+  providers?: import('./internal/jailbreak').JailbreakDetectorProvider[];
+  onDetect?: (analysis: import('./internal/jailbreak').JailbreakAnalysis) => void;
+}
+
+export interface UnicodeSanitizerSecurityOptions {
+  enabled?: boolean;
+  action?: 'strip' | 'warn' | 'block';
+  detectHomoglyphs?: boolean;
+  onDetect?: (result: import('./internal/unicode-sanitizer').UnicodeScanResult) => void;
+}
+
+export interface SecretDetectionSecurityOptions {
+  enabled?: boolean;
+  builtInPatterns?: boolean;
+  customPatterns?: import('./internal/secret-detection').CustomSecretPattern[];
+  scanResponse?: boolean;
+  action?: 'warn' | 'block' | 'redact';
+  onDetect?: (secrets: import('./internal/secret-detection').SecretDetection[]) => void;
+}
+
+export interface TopicGuardSecurityOptions {
+  enabled?: boolean;
+  allowedTopics?: import('./internal/topic-guard').TopicDefinition[];
+  blockedTopics?: import('./internal/topic-guard').TopicDefinition[];
+  action?: 'warn' | 'block';
+  onViolation?: (violation: import('./internal/topic-guard').TopicViolation) => void;
+}
+
+export interface OutputSafetySecurityOptions {
+  enabled?: boolean;
+  categories?: import('./internal/output-safety').OutputSafetyCategory[];
+  action?: 'warn' | 'block';
+  onDetect?: (threats: import('./internal/output-safety').OutputSafetyThreat[]) => void;
+}
+
+export interface PromptLeakageSecurityOptions {
+  enabled?: boolean;
+  systemPrompt: string;
+  threshold?: number;
+  blockOnLeak?: boolean;
+  onDetect?: (result: import('./internal/prompt-leakage').PromptLeakageResult) => void;
 }
 
 /** Configuration for real-time streaming guard. */
@@ -109,10 +163,17 @@ export type GuardrailEventType =
   | 'pii.redacted'
   | 'injection.detected'
   | 'injection.blocked'
+  | 'jailbreak.detected'
+  | 'jailbreak.blocked'
   | 'cost.exceeded'
   | 'content.violated'
   | 'schema.invalid'
-  | 'model.blocked';
+  | 'model.blocked'
+  | 'unicode.suspicious'
+  | 'secret.detected'
+  | 'topic.violated'
+  | 'output.unsafe'
+  | 'prompt.leaked';
 
 /** Payload emitted when a guardrail event fires. */
 export interface GuardrailEvent {
