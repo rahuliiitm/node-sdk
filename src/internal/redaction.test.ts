@@ -166,12 +166,12 @@ describe('PII Redaction', () => {
     });
 
     it('uses generic masking for other types (shows last 4)', async () => {
-      const result = await redactPII('IP: 203.0.113.42', { strategy: 'mask' });
-      // Generic masking: keep last 4 chars of "203.0.113.42" → "3.42"
-      expect(result.redactedText).not.toContain('203.0.113.42');
+      const result = await redactPII('IP: 85.12.45.78', { strategy: 'mask' });
+      // Generic masking: keep last 4 chars of "85.12.45.78" → "5.78"
+      expect(result.redactedText).not.toContain('85.12.45.78');
       const maskedVal = result.redactedText.replace('IP: ', '');
-      // Last 4 chars of the IP value are "3.42"
-      expect(maskedVal).toMatch(/\*+3\.42$/);
+      // Last 4 chars of the IP value are "5.78"
+      expect(maskedVal).toMatch(/\*+5\.78$/);
     });
 
     it('uses custom mask character', async () => {
