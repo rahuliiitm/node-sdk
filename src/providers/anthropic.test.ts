@@ -480,7 +480,7 @@ describe('wrapAnthropicClient', () => {
     expect(received.join('')).toBe('Hello world');
   });
 
-  it('strips promptPreview when security is enabled', async () => {
+  it('includes promptPreview even when security is enabled', async () => {
     const client = makeMockClient();
     const deps = makeDeps();
 
@@ -497,7 +497,7 @@ describe('wrapAnthropicClient', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     const event = deps.batcher.enqueue.mock.calls[0][0];
-    expect(event.promptPreview).toBeUndefined();
+    expect(event.promptPreview).toBeDefined();
   });
 
   it('uses context from AsyncLocalStorage', async () => {

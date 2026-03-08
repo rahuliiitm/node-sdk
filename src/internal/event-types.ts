@@ -21,6 +21,8 @@ export interface IngestEventPayload {
   environmentId?: string;
   metadata?: Record<string, string>;
 
+  responseText?: string;
+
   // Security metadata
   piiDetections?: {
     inputCount: number;
@@ -28,6 +30,8 @@ export interface IngestEventPayload {
     types: string[];
     redactionApplied: boolean;
     detectorUsed: 'regex' | 'ml' | 'both';
+    inputDetails?: Array<{ type: string; start: number; end: number; confidence: number }>;
+    outputDetails?: Array<{ type: string; start: number; end: number; confidence: number }>;
   };
   injectionRisk?: {
     score: number;

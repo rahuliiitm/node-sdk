@@ -461,7 +461,8 @@ export function wrapAnthropicClient<T extends object>(
                           feature,
                           systemHash: fingerprint.systemHash ?? undefined,
                           fullHash: fingerprint.fullHash,
-                          promptPreview: security ? undefined : fingerprint.promptPreview,
+                          promptPreview: fingerprint.promptPreview,
+                          responseText: report.responseText ?? undefined,
                           statusCode: 200,
                           traceId: alsCtx?.traceId ?? traceIdTag,
                           spanName: alsCtx?.spanName ?? spanNameTag,
@@ -478,6 +479,8 @@ export function wrapAnthropicClient<T extends object>(
                               types: [...new Set(allPii.map((d) => d.type))],
                               redactionApplied,
                               detectorUsed: (security.pii?.providers?.length ?? 0) > 0 ? 'both' : 'regex',
+                              inputDetails: inputPiiDetections.map((d) => ({ type: d.type, start: d.start, end: d.end, confidence: d.confidence })),
+                              outputDetails: streamPiiDetections.map((d) => ({ type: d.type, start: d.start, end: d.end, confidence: d.confidence })),
                             };
                           }
                           const injResult = report.injectionRisk ?? injectionResult;
@@ -514,9 +517,9 @@ export function wrapAnthropicClient<T extends object>(
                 const latencyMs = Date.now() - startMs;
 
                 let responseForCaller: AnthropicResponse = result;
+                const responseText = extractAnthropicResponseText(result);
 
                 if (security) {
-                  const responseText = extractAnthropicResponseText(result);
 
                   // Post-call: PII scan response
                   if (security.pii?.scanResponse && responseText) {
@@ -624,7 +627,8 @@ export function wrapAnthropicClient<T extends object>(
                       feature,
                       systemHash: fingerprint.systemHash ?? undefined,
                       fullHash: fingerprint.fullHash,
-                      promptPreview: security ? undefined : fingerprint.promptPreview,
+                      promptPreview: fingerprint.promptPreview,
+                      responseText: responseText ?? undefined,
                       statusCode: 200,
                       traceId: alsCtx?.traceId ?? traceIdTag,
                       spanName: alsCtx?.spanName ?? spanNameTag,
@@ -646,6 +650,8 @@ export function wrapAnthropicClient<T extends object>(
                           ])],
                           redactionApplied,
                           detectorUsed: hasMlPii ? 'both' : 'regex',
+                          inputDetails: inputPiiDetections.map((d) => ({ type: d.type, start: d.start, end: d.end, confidence: d.confidence })),
+                          outputDetails: outputPiiDetections.map((d) => ({ type: d.type, start: d.start, end: d.end, confidence: d.confidence })),
                         };
                       }
 

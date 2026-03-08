@@ -693,7 +693,8 @@ export class LaunchPromptly {
                                   feature,
                                   systemHash: fingerprint.systemHash ?? undefined,
                                   fullHash: fingerprint.fullHash,
-                                  promptPreview: security ? undefined : fingerprint.promptPreview,
+                                  promptPreview: fingerprint.promptPreview,
+                                  responseText: report.responseText ?? undefined,
                                   statusCode: 200,
                                   traceId,
                                   spanName,
@@ -714,6 +715,8 @@ export class LaunchPromptly {
                                       types: [...new Set(allPii.map((d) => d.type))],
                                       redactionApplied,
                                       detectorUsed: hasMlPiiProviders ? 'both' : 'regex',
+                                      inputDetails: inputPiiDetections.map((d) => ({ type: d.type, start: d.start, end: d.end, confidence: d.confidence })),
+                                      outputDetails: streamPiiDetections.map((d) => ({ type: d.type, start: d.start, end: d.end, confidence: d.confidence })),
                                     };
                                   }
 
@@ -823,9 +826,9 @@ export class LaunchPromptly {
 
                         // Extract response text for post-call scanning
                         let responseForCaller = result;
+                        const responseText = (result as any).choices?.[0]?.message?.content as string | undefined;
 
                         if (security) {
-                          const responseText = (result as any).choices?.[0]?.message?.content as string | undefined;
 
                           // Post-call: scan response for PII
                           if (security.pii?.scanResponse && responseText) {
@@ -1009,7 +1012,8 @@ export class LaunchPromptly {
                               feature,
                               systemHash: fingerprint.systemHash ?? undefined,
                               fullHash: fingerprint.fullHash,
-                              promptPreview: security ? undefined : fingerprint.promptPreview,
+                              promptPreview: fingerprint.promptPreview,
+                              responseText: responseText ?? undefined,
                               statusCode: 200,
                               traceId,
                               spanName,
@@ -1031,6 +1035,8 @@ export class LaunchPromptly {
                                   ])],
                                   redactionApplied,
                                   detectorUsed: hasMlPiiProviders ? 'both' : 'regex',
+                                  inputDetails: inputPiiDetections.map((d) => ({ type: d.type, start: d.start, end: d.end, confidence: d.confidence })),
+                                  outputDetails: outputPiiDetections.map((d) => ({ type: d.type, start: d.start, end: d.end, confidence: d.confidence })),
                                 };
                               }
 
