@@ -106,7 +106,7 @@ export type {
   TopicViolation,
 } from './internal/topic-guard';
 
-export { detectOutputThreats } from './internal/output-safety';
+export { scanOutputSafety } from './internal/output-safety';
 export type {
   OutputSafetyOptions,
   OutputSafetyCategory,
