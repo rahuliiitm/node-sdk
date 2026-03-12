@@ -266,19 +266,32 @@ export function validateOutputSchema(
   responseText: string,
   options: OutputSchemaOptions,
 ): { valid: boolean; errors: SchemaValidationError[]; parsed?: unknown } {
-  // Try to parse JSON
+  // Try to parse JSON (with fallback for markdown-fenced JSON)
   let parsed: unknown;
   try {
     parsed = JSON.parse(responseText);
-  } catch (e) {
-    const errors: SchemaValidationError[] = [{
-      path: '/',
-      message: `Invalid JSON: ${(e as Error).message}`,
-    }];
-    if (options.onInvalid) {
-      options.onInvalid(errors);
+  } catch {
+    // Try extracting JSON from markdown code fences (```json ... ```)
+    const fenceMatch = responseText.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+    if (fenceMatch) {
+      try {
+        parsed = JSON.parse(fenceMatch[1].trim());
+      } catch (e2) {
+        const errors: SchemaValidationError[] = [{
+          path: '/',
+          message: `Invalid JSON: ${(e2 as Error).message}`,
+        }];
+        if (options.onInvalid) { options.onInvalid(errors); }
+        return { valid: false, errors };
+      }
+    } else {
+      const errors: SchemaValidationError[] = [{
+        path: '/',
+        message: 'Invalid JSON: response is not valid JSON and contains no markdown code fence',
+      }];
+      if (options.onInvalid) { options.onInvalid(errors); }
+      return { valid: false, errors };
     }
-    return { valid: false, errors };
   }
 
   const errors = validateSchema(parsed, options.schema);

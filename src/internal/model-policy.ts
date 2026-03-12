@@ -47,7 +47,7 @@ export function checkModelPolicy(
 ): ModelPolicyViolation | null {
   // 1. Model whitelist
   if (options.allowedModels && options.allowedModels.length > 0) {
-    if (!options.allowedModels.includes(params.model)) {
+    if (!options.allowedModels.some(m => params.model === m || params.model.startsWith(m + '-'))) {
       return {
         rule: 'model_not_allowed',
         message: `Model "${params.model}" is not in the allowed list: ${options.allowedModels.join(', ')}`,

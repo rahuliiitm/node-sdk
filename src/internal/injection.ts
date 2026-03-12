@@ -48,13 +48,15 @@ const RULES: InjectionRule[] = [
   {
     category: 'role_manipulation',
     patterns: [
-      /you\s+are\s+now\s+(?:a|an|the)\s+/i,
+      /you\s+are\s+now\s+(?:(?:a|an|the)\s+)?\w+/i,
       /(?:act|behave)\s+as\s+(?:if\s+)?(?:you\s+(?:are|were)\s+)?/i,
       /pretend\s+(?:you\s+are|to\s+be)/i,
       /(?:new|switch|change)\s+(?:your\s+)?(?:persona|personality|character|role)/i,
       /from\s+now\s+on\s+you\s+(?:are|will)/i,
       /jailbreak/i,
-      /DAN\s+mode/i,
+      /(?:DAN|STAN|DUDE|AIM|DEV)\s*(?:mode|prompt|enabled?|activated?)/i,
+      /(?:enter|enable|activate|switch\s+to)\s+(?:\w+\s+)?(?:mode|persona)/i,
+      /(?:write\s+a\s+(?:story|scene|chapter|script)\s+(?:where|in\s+which)|in\s+a\s+(?:fictional|hypothetical)\s+(?:world|scenario))\s+.{0,80}(?:explain|describe|demonstrate|show)\s+how/i,
     ],
     weight: 0.35,
   },
@@ -82,8 +84,8 @@ const RULES: InjectionRule[] = [
   {
     category: 'encoding_evasion',
     patterns: [
-      // Base64 blocks (64+ chars of base64 alphabet)
-      /[A-Za-z0-9+/=]{64,}/,
+      // Base64 blocks (32+ chars of base64 alphabet)
+      /[A-Za-z0-9+/=]{32,}/,
       // Excessive Unicode escape sequences
       /(?:\\u[0-9a-fA-F]{4}\s*){4,}/,
       // ROT13 instruction pattern

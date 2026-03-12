@@ -40,6 +40,12 @@ export interface SecretDetection {
   confidence: number;
 }
 
+/** Provider interface for pluggable secret detectors (e.g., ML plugin). */
+export interface SecretDetectorProvider {
+  detect(text: string, options?: SecretDetectionOptions): SecretDetection[] | Promise<SecretDetection[]>;
+  readonly name: string;
+}
+
 // ── Built-in patterns ────────────────────────────────────────────────────────
 
 interface PatternEntry {
@@ -60,7 +66,12 @@ const PATTERNS: PatternEntry[] = [
   { name: 'private_key', pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/g, confidence: 0.99 },
   { name: 'connection_string', pattern: /(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis|amqp):\/\/[^\s"']+/g, confidence: 0.90 },
   { name: 'webhook_url', pattern: /https?:\/\/hooks\.(?:slack|discord)\.com\/[^\s]+/g, confidence: 0.85 },
-  { name: 'generic_high_entropy', pattern: /(?:secret|key|token|password|api_key|apikey)[\s:="']*[A-Za-z0-9\/+=]{32,}/gi, confidence: 0.70 },
+  { name: 'gcp_api_key', pattern: /\bAIza[0-9A-Za-z\-_]{35}\b/g, confidence: 0.95 },
+  { name: 'npm_token', pattern: /\bnpm_[A-Za-z0-9]{36}\b/g, confidence: 0.95 },
+  { name: 'docker_pat', pattern: /\bdckr_pat_[A-Za-z0-9_\-]{30,}\b/g, confidence: 0.95 },
+  { name: 'basic_auth', pattern: /\bBasic\s+[A-Za-z0-9+\/]{20,}={0,2}\b/g, confidence: 0.80 },
+  { name: 'credential_assignment', pattern: /(?:^|[\s;,{(])[A-Za-z_]*(?:PASSWORD|SECRET|CREDENTIAL|PASSPHRASE|AUTH_TOKEN|PRIVATE_KEY)[A-Za-z_0-9]*\s*[=:]\s*['"`]([^'"`\n]{1,200})['"`]/gim, confidence: 0.85 },
+  { name: 'generic_high_entropy', pattern: /(?:secret|key|token|password|api_key|apikey)[\s:="']*[A-Za-z0-9\/+=\-_]{32,}/gi, confidence: 0.70 },
 ];
 
 // ── Detection ────────────────────────────────────────────────────────────────
@@ -139,6 +150,17 @@ export function detectSecrets(
 }
 
 // ── Deduplication ────────────────────────────────────────────────────────────
+
+/**
+ * Merge secret detections from multiple sources (built-in + providers).
+ * Concatenates, sorts by start, and deduplicates overlapping detections.
+ */
+export function mergeSecretDetections(...arrays: SecretDetection[][]): SecretDetection[] {
+  const all = arrays.flat();
+  if (all.length === 0) return [];
+  all.sort((a, b) => a.start - b.start || b.confidence - a.confidence);
+  return deduplicateDetections(all);
+}
 
 function deduplicateDetections(sorted: SecretDetection[]): SecretDetection[] {
   if (sorted.length === 0) return sorted;

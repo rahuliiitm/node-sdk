@@ -12,7 +12,7 @@ import type { StreamSecurityReport } from './internal/streaming';
 import { checkModelPolicy } from './internal/model-policy';
 import { validateOutputSchema } from './internal/schema-validator';
 import { scanUnicode, type UnicodeScanResult } from './internal/unicode-sanitizer';
-import { detectSecrets, type SecretDetection } from './internal/secret-detection';
+import { detectSecrets, mergeSecretDetections, type SecretDetection } from './internal/secret-detection';
 import { detectJailbreak, mergeJailbreakAnalyses, type JailbreakAnalysis } from './internal/jailbreak';
 import { checkTopicGuard, type TopicViolation } from './internal/topic-guard';
 import { scanOutputSafety, type OutputSafetyThreat } from './internal/output-safety';
@@ -451,6 +451,15 @@ export class LaunchPromptly {
                               customPatterns: security.secretDetection.customPatterns,
                             });
 
+                            // Merge with provider detections
+                            if (security.secretDetection.providers?.length) {
+                              const providerDets = await Promise.all(security.secretDetection.providers.map(async (p) => {
+                                try { return await Promise.resolve(p.detect(allInput)); }
+                                catch { return [] as SecretDetection[]; }
+                              }));
+                              inputSecretDetections = mergeSecretDetections(inputSecretDetections, ...providerDets);
+                            }
+
                             if (inputSecretDetections.length > 0) {
                               emit('secret.detected', { detections: inputSecretDetections, direction: 'input' });
                               security.secretDetection.onDetect?.(inputSecretDetections);
@@ -681,13 +690,23 @@ export class LaunchPromptly {
                                 const traceId = alsCtx?.traceId ?? traceIdTag;
                                 const spanName = alsCtx?.spanName ?? spanNameTag;
 
+                                // Approximate cost from stream report
+                                const approxOutputTokens = report.approximateTokens ?? 0;
+                                const streamCost = approxOutputTokens > 0
+                                  ? calculateEventCost('openai', params.model, 0, approxOutputTokens)
+                                  : 0;
+
+                                if (costGuard && streamCost > 0) {
+                                  costGuard.recordCost(streamCost, customerId);
+                                }
+
                                 const event: IngestEventPayload = {
                                   provider: 'openai',
                                   model: params.model,
                                   inputTokens: 0,
-                                  outputTokens: 0,
-                                  totalTokens: 0,
-                                  costUsd: 0,
+                                  outputTokens: approxOutputTokens,
+                                  totalTokens: approxOutputTokens,
+                                  costUsd: streamCost,
                                   latencyMs,
                                   customerId,
                                   feature,
@@ -909,6 +928,14 @@ export class LaunchPromptly {
                               builtInPatterns: security.secretDetection.builtInPatterns,
                               customPatterns: security.secretDetection.customPatterns,
                             });
+
+                            if (security.secretDetection.providers?.length) {
+                              const providerDets = await Promise.all(security.secretDetection.providers.map(async (p) => {
+                                try { return await Promise.resolve(p.detect(responseText!)); }
+                                catch { return [] as SecretDetection[]; }
+                              }));
+                              outputSecretDetections = mergeSecretDetections(outputSecretDetections, ...providerDets);
+                            }
 
                             if (outputSecretDetections.length > 0) {
                               emit('secret.detected', { detections: outputSecretDetections, direction: 'output' });
@@ -1218,6 +1245,41 @@ export class LaunchPromptly {
       als: this.als,
       emit: this._emit.bind(this),
     }, options);
+  }
+
+  /**
+   * Report feedback on a guardrail detection to improve future accuracy.
+   *
+   * @param eventId - The event ID returned by the dashboard or event payload.
+   * @param options - Feedback details: guardrailType, originalAction, feedback.
+   */
+  async reportFeedback(
+    eventId: string,
+    options: {
+      guardrailType: 'injection' | 'jailbreak' | 'pii' | 'content';
+      originalAction: 'allow' | 'warn' | 'block';
+      feedback: 'correct' | 'false_positive' | 'false_negative';
+      notes?: string;
+    },
+  ): Promise<void> {
+    try {
+      const res = await fetch(`${this.endpoint}/v1/security/feedback/report`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({ eventId, ...options }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        // Log but don't throw — feedback is non-critical
+        // eslint-disable-next-line no-console
+        console.warn(`[launchpromptly] feedback report failed: ${res.status}`);
+      }
+    } catch {
+      // Swallow — feedback is fire-and-forget
+    }
   }
 
   /** Flush all pending events to the API. */

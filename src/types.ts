@@ -60,6 +60,8 @@ export interface SecretDetectionSecurityOptions {
   enabled?: boolean;
   builtInPatterns?: boolean;
   customPatterns?: import('./internal/secret-detection').CustomSecretPattern[];
+  /** Pluggable secret detection providers (e.g., ML-based). */
+  providers?: import('./internal/secret-detection').SecretDetectorProvider[];
   scanResponse?: boolean;
   action?: 'warn' | 'block' | 'redact';
   onDetect?: (secrets: import('./internal/secret-detection').SecretDetection[]) => void;

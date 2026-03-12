@@ -8,6 +8,7 @@
  *
  * - {@link MLToxicityDetector} — Transformer-based toxicity / content-safety detection
  * - {@link MLInjectionDetector} — Transformer-based prompt injection detection
+ * - {@link MLJailbreakDetector} — Transformer-based jailbreak detection
  * - {@link MLPIIDetector} — NER-based PII detection (person names, orgs, locations)
  *
  * Each provider satisfies the corresponding provider interface defined in the
@@ -41,3 +42,6 @@ export type { MLInjectionDetectorOptions } from './injection-detector';
 
 export { MLPIIDetector } from './pii-detector';
 export type { MLPIIDetectorOptions } from './pii-detector';
+
+export { MLJailbreakDetector } from './jailbreak-detector';
+export type { MLJailbreakDetectorOptions } from './jailbreak-detector';

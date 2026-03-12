@@ -48,7 +48,7 @@ const EMAIL_RE = /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/g;
 const PHONE_US_RE =
   /\b(?:\+1[-.\s]?)?\(?[2-9]\d{2}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g;
 
-const PHONE_INTL_RE = /(?<=^|[\s(])\+\d{1,3}[-.\s]?\d{4,14}(?:[-.\s]\d{1,6})*\b/g;
+const PHONE_INTL_RE = /(?<=^|[\s(])\+\d{1,3}[-.\s]?(?:[-.\s]?\d{2,6}){2,5}\b/g;
 
 const SSN_RE = /\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b/g;
 
@@ -56,18 +56,22 @@ const CREDIT_CARD_RE = /\b\d(?:[\s\-]?\d){12,18}\b/g;
 
 const IP_V4_RE = /\b(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g;
 
+const IP_V6_RE = /\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b|(?:[0-9a-fA-F]{1,4}:){1,7}:|::(?:[0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}\b/g;
+
 // Common API key / secret patterns
 const API_KEY_RE =
   /\b(?:sk-[a-zA-Z0-9]{20,}|sk-proj-[a-zA-Z0-9\-_]{20,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|glpat-[a-zA-Z0-9\-_]{20,}|xox[bsapr]-[a-zA-Z0-9\-]{10,})\b/g;
 
-const DATE_OF_BIRTH_RE = /\b(?:0[1-9]|1[0-2])[\/\-](?:0[1-9]|[12]\d|3[01])[\/\-](?:19|20)\d{2}\b/g;
+const DATE_OF_BIRTH_RE = /\b(?:(?:0[1-9]|1[0-2])[\/\-](?:0[1-9]|[12]\d|3[01])|(?:0[1-9]|[12]\d|3[01])[\/\-](?:0[1-9]|1[0-2]))[\/\-](?:19|20)\d{2}\b/g;
+
+const DATE_OF_BIRTH_ISO_RE = /\b(?:19|20)\d{2}[\/\-](?:0[1-9]|1[0-2])[\/\-](?:0[1-9]|[12]\d|3[01])\b/g;
 
 const US_ADDRESS_RE =
   /\b\d{1,6}\s+[A-Za-z][A-Za-z\s]{1,30}\s+(?:St(?:reet)?|Ave(?:nue)?|Blvd|Boulevard|Dr(?:ive)?|Ln|Lane|Rd|Road|Way|Ct|Court|Pl(?:ace)?|Cir(?:cle)?|Pkwy|Parkway)\b/gi;
 
 // ── International PII patterns ──────────────────────────────────────────────
 
-const IBAN_RE = /\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}([A-Z0-9]?){0,16}\b/g;
+const IBAN_RE = /\b[A-Z]{2}\d{2}\s?[A-Z0-9]{4}\s?\d{4}\s?\d{4}\s?[\dA-Z\s]{0,20}\b/g;
 
 const NHS_NUMBER_RE = /(?<!\+)\b\d{3}\s?\d{3}\s?\d{4}\b/g;
 
@@ -288,8 +292,10 @@ const PATTERNS: PatternEntry[] = [
     confidence: 0.8,
     validate: ipContextCheck,
   },
+  { type: 'ip_address', regex: IP_V6_RE, confidence: 0.8 },
   { type: 'api_key', regex: API_KEY_RE, confidence: 0.95 },
   { type: 'date_of_birth', regex: DATE_OF_BIRTH_RE, confidence: 0.7, validate: dobContextCheck },
+  { type: 'date_of_birth', regex: DATE_OF_BIRTH_ISO_RE, confidence: 0.7, validate: dobContextCheck },
   { type: 'us_address', regex: US_ADDRESS_RE, confidence: 0.7 },
   { type: 'iban', regex: IBAN_RE, confidence: 0.9 },
   {

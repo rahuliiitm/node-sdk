@@ -234,8 +234,9 @@ describe('Secret Detection', () => {
     it('detects secret= with long value', () => {
       const longValue = 'x'.repeat(32);
       const result = detectSecrets(`secret="${longValue}"`);
-      const generic = result.filter((d) => d.type === 'generic_high_entropy');
-      expect(generic).toHaveLength(1);
+      // credential_assignment may win deduplication over generic_high_entropy
+      const matched = result.filter((d) => d.type === 'generic_high_entropy' || d.type === 'credential_assignment');
+      expect(matched).toHaveLength(1);
     });
 
     it('detects token: with long value', () => {
