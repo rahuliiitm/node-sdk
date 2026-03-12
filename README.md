@@ -98,7 +98,7 @@ On every LLM call, the SDK runs a 20-step pipeline split across pre-call and pos
 | Option | Default | Description |
 |--------|---------|-------------|
 | `apiKey` | `LAUNCHPROMPTLY_API_KEY` env | Your LaunchPromptly API key |
-| `endpoint` | `https://launchpromptly-api-950530830180.us-west1.run.app` | API base URL |
+| `endpoint` | `https://api.launchpromptly.dev` | API base URL |
 | `flushAt` | `10` | Batch size threshold for auto-flush |
 | `flushInterval` | `5000` | Timer interval for auto-flush (ms) |
 | `on` | — | Guardrail event handlers |
