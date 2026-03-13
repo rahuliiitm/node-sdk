@@ -82,10 +82,13 @@ const CATEGORY_RULES: CategoryRule[] = [
     category: 'self_harm',
     patterns: [
       /\b(?:how\s+to\s+)?(?:commit|method(?:s)?\s+(?:of|for))\s+suicide\b/i,
+      /\b(?:want|need|going)\s+to\s+(?:end|take)\s+(?:my|this|his|her|their)\s+life\b/i,
       /\bways\s+to\s+(?:end\s+(?:my|your)\s+life|kill\s+(?:myself|yourself))\b/i,
       /\b(?:how\s+to\s+)?(?:overdose|OD)\s+on\s+\w+/i,
       /\bwhat\s+(?:pills?|dose|amount|medication)\s+(?:(?:would|will|to|can)\s+)?(?:kill|harm|hurt)\s+(?:me|myself|someone)\b/i,
       /\b(?:best|easy|painless)\s+(?:way|method)s?\s+to\s+(?:die|end\s+(?:it|my\s+life)|kill\s+myself)\b/i,
+      /\b(?:don'?t|do\s+not)\s+want\s+to\s+(?:live|be\s+alive|exist)\b/i,
+      /\b(?:kill|harm|hurt)\s+(?:myself|themselves|himself|herself)\b/i,
       /\b(?:self[-\s]?harm|self[-\s]?injur|cutting)\s+(?:method|how|tips|guide|tutorial)\b/i,
     ],
     severity: 'block',
