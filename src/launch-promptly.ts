@@ -264,7 +264,11 @@ export class LaunchPromptly {
     const traceIdTag = options.traceId;
     const spanNameTag = options.spanName;
     const als = this.als;
-    const security = options.security ? resolveSecurityOptions(options.security) : undefined;
+    let security = options.security ? resolveSecurityOptions(options.security) : undefined;
+
+    // Lazy ML provider state — loaded once on first call, cached for subsequent calls
+    let mlInitDone = false;
+    let mlInitPromise: Promise<void> | null = null;
 
     // Initialize cost guard if configured
     const costGuard = security?.costGuard
@@ -290,6 +294,19 @@ export class LaunchPromptly {
                         // Capture ALS context at call time (not at wrap time)
                         const alsCtx = als.getStore();
 
+                        // Lazy ML provider initialization (runs once on first call)
+                        if (security?.useML && !mlInitDone) {
+                          if (!mlInitPromise) {
+                            mlInitPromise = (async () => {
+                              const { createMLProviders, mergeMLProviders } = await import('./internal/ml-resolver');
+                              const mlProviders = await createMLProviders(security!.useML!);
+                              security = mergeMLProviders(security!, mlProviders);
+                              mlInitDone = true;
+                            })();
+                          }
+                          await mlInitPromise;
+                        }
+
                         // ── PRE-CALL SECURITY PIPELINE ──────────────────────
 
                         // Collect security metadata for the event
@@ -308,6 +325,7 @@ export class LaunchPromptly {
                         let topicViolationResult: TopicViolation | null = null;
                         let outputSafetyThreats: OutputSafetyThreat[] = [];
                         let promptLeakageResult: PromptLeakageResult | null = null;
+                        let hallucinationResult: import('./internal/hallucination').HallucinationResult | null = null;
 
                         // Build a mutable copy of params for potential message redaction
                         let effectiveParams = params;
@@ -409,8 +427,9 @@ export class LaunchPromptly {
 
                             // Merge with ML provider detections if any
                             if (security.pii?.providers?.length) {
-                              const providerDets = await Promise.all(security.pii.providers.map(async (p) => {
-                                try { return await Promise.resolve(p.detect(allMessageText, { types: security.pii?.types })); }
+                              const piiOpts = security.pii;
+                              const providerDets = await Promise.all(piiOpts.providers!.map(async (p) => {
+                                try { return await Promise.resolve(p.detect(allMessageText, { types: piiOpts.types })); }
                                 catch { return [] as PIIDetection[]; }
                               }));
                               inputPiiDetections = mergeDetections(inputPiiDetections, ...providerDets);
@@ -586,6 +605,22 @@ export class LaunchPromptly {
                               'input',
                               security.contentFilter,
                             );
+
+                            // Run pluggable content filter providers (e.g., ML toxicity)
+                            if (security.contentFilter.providers?.length) {
+                              const providerResults = await Promise.all(
+                                security.contentFilter.providers.map(async (p) => {
+                                  try {
+                                    return await Promise.resolve(p.detect(allInput, 'input'));
+                                  } catch {
+                                    return [] as ContentViolation[];
+                                  }
+                                }),
+                              );
+                              for (const pv of providerResults) {
+                                inputContentViolations.push(...pv);
+                              }
+                            }
 
                             if (inputContentViolations.length > 0) {
                               emit('content.violated', { violations: inputContentViolations, direction: 'input' });
@@ -906,6 +941,23 @@ export class LaunchPromptly {
                               'output',
                               security.contentFilter,
                             );
+
+                            // Run pluggable content filter providers on output
+                            if (security.contentFilter.providers?.length) {
+                              const providerResults = await Promise.all(
+                                security.contentFilter.providers.map(async (p) => {
+                                  try {
+                                    return await Promise.resolve(p.detect(responseText, 'output'));
+                                  } catch {
+                                    return [] as ContentViolation[];
+                                  }
+                                }),
+                              );
+                              for (const pv of providerResults) {
+                                outputContentViolations.push(...pv);
+                              }
+                            }
+
                             if (outputContentViolations.length > 0) {
                               emit('content.violated', { violations: outputContentViolations, direction: 'output' });
                             }
@@ -944,6 +996,54 @@ export class LaunchPromptly {
                                 throw new Error(
                                   `System prompt leakage detected (similarity: ${promptLeakageResult.similarity.toFixed(2)})`,
                                 );
+                              }
+                            }
+                          }
+
+                          // Post-call: hallucination detection
+                          if (security.hallucination?.enabled !== false && security.hallucination && responseText) {
+                            // Determine source text: explicit > system prompt
+                            let sourceText = security.hallucination.sourceText;
+                            if (!sourceText && security.hallucination.extractFromSystemPrompt !== false) {
+                              const sysMsg = params.messages.find((m) => m.role === 'system');
+                              if (sysMsg && typeof sysMsg.content === 'string') {
+                                sourceText = sysMsg.content;
+                              }
+                            }
+
+                            if (sourceText) {
+                              const { detectHallucination, mergeHallucinationResults } = await import('./internal/hallucination');
+                              hallucinationResult = detectHallucination(responseText, sourceText, {
+                                threshold: security.hallucination.threshold,
+                              });
+
+                              // Run ML providers if available
+                              if (security.hallucination.providers?.length) {
+                                const providerResults = await Promise.all(
+                                  security.hallucination.providers.map(async (p) => {
+                                    try {
+                                      return await Promise.resolve(p.detect(responseText, sourceText!));
+                                    } catch {
+                                      return null;
+                                    }
+                                  }),
+                                );
+                                const validResults = providerResults.filter(Boolean) as import('./internal/hallucination').HallucinationResult[];
+                                if (validResults.length > 0) {
+                                  hallucinationResult = mergeHallucinationResults([hallucinationResult!, ...validResults]);
+                                }
+                              }
+
+                              if (hallucinationResult!.hallucinated) {
+                                emit('hallucination.detected', { result: hallucinationResult });
+                                security.hallucination.onDetect?.(hallucinationResult!);
+
+                                if (!isShadow && security.hallucination.blockOnDetection) {
+                                  emit('hallucination.blocked', { result: hallucinationResult });
+                                  throw new Error(
+                                    `Hallucination detected (faithfulness: ${hallucinationResult!.faithfulnessScore.toFixed(2)})`,
+                                  );
+                                }
                               }
                             }
                           }
@@ -1184,6 +1284,14 @@ export class LaunchPromptly {
                                   leaked: true,
                                   similarity: promptLeakageResult.similarity,
                                   metaResponseDetected: promptLeakageResult.metaResponseDetected,
+                                };
+                              }
+
+                              if (hallucinationResult?.hallucinated) {
+                                event.hallucination = {
+                                  detected: true,
+                                  faithfulness_score: hallucinationResult.faithfulnessScore,
+                                  severity: hallucinationResult.severity,
                                 };
                               }
                             }

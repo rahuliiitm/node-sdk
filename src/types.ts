@@ -20,12 +20,27 @@ export interface WrapOptions {
   security?: SecurityOptions;
 }
 
+/** Guardrail types that have ML provider implementations. */
+export type MLGuardrailType = 'injection' | 'jailbreak' | 'pii' | 'toxicity' | 'contentFilter' | 'hallucination';
+
 /** Security configuration for the wrap() pipeline. */
 export interface SecurityOptions {
   /** 'enforce' (default) = normal behavior. 'shadow' = detect + emit events, never block or redact. */
   mode?: 'enforce' | 'shadow';
   /** Named preset that fills in defaults. Individual overrides take priority. */
   preset?: import('./internal/presets').SensitivityPreset;
+  /**
+   * Auto-create and register ML-powered providers for guardrails.
+   *
+   * - `true` → enable ML for all available guardrails
+   * - `false` (default) → regex/rule-based only
+   * - `string[]` → enable ML only for listed guardrails
+   *
+   * Valid names: 'injection', 'jailbreak', 'pii', 'toxicity' (alias: 'contentFilter'), 'hallucination'
+   *
+   * Requires: npm install @huggingface/transformers
+   */
+  useML?: boolean | MLGuardrailType[];
   pii?: PIISecurityOptions;
   injection?: InjectionSecurityOptions;
   jailbreak?: JailbreakSecurityOptions;
@@ -39,6 +54,7 @@ export interface SecurityOptions {
   topicGuard?: TopicGuardSecurityOptions;
   outputSafety?: OutputSafetySecurityOptions;
   promptLeakage?: PromptLeakageSecurityOptions;
+  hallucination?: import('./internal/hallucination').HallucinationOptions;
   audit?: {
     logLevel?: 'none' | 'summary' | 'detailed';
   };
@@ -187,7 +203,9 @@ export type GuardrailEventType =
   | 'secret.detected'
   | 'topic.violated'
   | 'output.unsafe'
-  | 'prompt.leaked';
+  | 'prompt.leaked'
+  | 'hallucination.detected'
+  | 'hallucination.blocked';
 
 /** Payload emitted when a guardrail event fires. */
 export interface GuardrailEvent {

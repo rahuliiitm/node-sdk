@@ -88,6 +88,11 @@ export interface IngestEventPayload {
     similarity: number;
     metaResponseDetected: boolean;
   };
+  hallucination?: {
+    detected: boolean;
+    faithfulness_score: number;
+    severity: 'low' | 'medium' | 'high';
+  };
 }
 
 /**

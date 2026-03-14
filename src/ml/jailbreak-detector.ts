@@ -27,7 +27,7 @@ const INJECTION_LABELS = new Set(['INJECTION', 'LABEL_1', 'INJECTED', 'UNSAFE'])
 const SAFE_LABELS = new Set(['SAFE', 'LABEL_0', 'BENIGN']);
 
 export interface MLJailbreakDetectorOptions {
-  /** HuggingFace model name/path. Default: 'testsavantai/prompt-injection-defender-tiny-v0' */
+  /** HuggingFace model name/path. Default: 'meta-llama/Prompt-Guard-86M' */
   modelName?: string;
   /** Use quantized (q8) model for smaller size and faster inference. Default: true */
   quantized?: boolean;
@@ -65,7 +65,7 @@ export class MLJailbreakDetector implements JailbreakDetectorProvider {
    * This is async because model loading requires downloading/caching.
    */
   static async create(options?: MLJailbreakDetectorOptions): Promise<MLJailbreakDetector> {
-    const modelName = options?.modelName ?? 'testsavantai/prompt-injection-defender-tiny-v0';
+    const modelName = options?.modelName ?? 'meta-llama/Prompt-Guard-86M';
     const quantized = options?.quantized ?? true;
 
     let pipeline: (task: string, model: string, opts?: Record<string, unknown>) => Promise<ClassifierFn>;
@@ -102,7 +102,7 @@ export class MLJailbreakDetector implements JailbreakDetectorProvider {
   ): MLJailbreakDetector {
     return new MLJailbreakDetector(
       classifier,
-      options?.modelName ?? 'testsavantai/prompt-injection-defender-tiny-v0',
+      options?.modelName ?? 'meta-llama/Prompt-Guard-86M',
     );
   }
 

@@ -361,6 +361,23 @@ export function wrapAnthropicClient<T extends object>(
                   if (security.contentFilter?.enabled !== false && security.contentFilter) {
                     const { allText } = extractAnthropicMessageTexts(params);
                     inputContentViolations = detectContentViolations(allText, 'input', security.contentFilter);
+
+                    // Run pluggable content filter providers (e.g., ML toxicity)
+                    if (security.contentFilter.providers?.length) {
+                      const providerResults = await Promise.all(
+                        security.contentFilter.providers.map(async (p) => {
+                          try {
+                            return await Promise.resolve(p.detect(allText, 'input'));
+                          } catch {
+                            return [] as ContentViolation[];
+                          }
+                        }),
+                      );
+                      for (const pv of providerResults) {
+                        inputContentViolations.push(...pv);
+                      }
+                    }
+
                     if (inputContentViolations.length > 0) {
                       emit?.('content.violated', { violations: inputContentViolations, direction: 'input' });
                     }
@@ -552,6 +569,22 @@ export function wrapAnthropicClient<T extends object>(
                   // Post-call: content filter
                   if (security.contentFilter?.enabled !== false && security.contentFilter && responseText) {
                     outputContentViolations = detectContentViolations(responseText, 'output', security.contentFilter);
+
+                    if (security.contentFilter.providers?.length) {
+                      const providerResults = await Promise.all(
+                        security.contentFilter.providers.map(async (p) => {
+                          try {
+                            return await Promise.resolve(p.detect(responseText, 'output'));
+                          } catch {
+                            return [] as ContentViolation[];
+                          }
+                        }),
+                      );
+                      for (const pv of providerResults) {
+                        outputContentViolations.push(...pv);
+                      }
+                    }
+
                     if (outputContentViolations.length > 0) {
                       emit?.('content.violated', { violations: outputContentViolations, direction: 'output' });
                     }

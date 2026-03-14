@@ -21,6 +21,8 @@ export interface ContentFilterOptions {
   onViolation?: (violation: ContentViolation) => void;
   /** Safe domains — when domain context is detected near a match, downgrade 'block' to 'warn'. */
   safeDomains?: SafeDomain[];
+  /** Pluggable content filter providers (e.g., ML toxicity). */
+  providers?: ContentFilterProvider[];
 }
 
 export interface CustomPattern {

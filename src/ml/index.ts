@@ -45,3 +45,6 @@ export type { MLPIIDetectorOptions } from './pii-detector';
 
 export { MLJailbreakDetector } from './jailbreak-detector';
 export type { MLJailbreakDetectorOptions } from './jailbreak-detector';
+
+export { MLHallucinationDetector } from './hallucination-detector';
+export type { MLHallucinationDetectorOptions } from './hallucination-detector';
