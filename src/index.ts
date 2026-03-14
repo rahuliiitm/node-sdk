@@ -157,3 +157,4 @@ export type {
 // Backward-compatible alias
 export { LaunchPromptly as PlanForge } from './launch-promptly';
 export type { LaunchPromptlyOptions as PlanForgeOptions } from './types';
+export type { SensitivityPreset } from './internal/presets';

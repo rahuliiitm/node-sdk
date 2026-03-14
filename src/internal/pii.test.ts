@@ -3,6 +3,9 @@ import {
   mergeDetections,
   RegexPIIDetector,
   createCustomDetector,
+  applySuppressiveContext,
+  filterAllowList,
+  filterByConfidence,
   type PIIDetection,
   type CustomPIIPattern,
 } from './pii';
@@ -904,6 +907,98 @@ describe('PII Detection', () => {
       }));
       expect(result).toHaveLength(1);
       expect(result[0].type).toBe('employee_id');
+    });
+  });
+
+  // ── Allow list ──────────────────────────────────────────────────────────
+
+  describe('allow list', () => {
+    it('filters out exact matches (normalized)', () => {
+      const detections = detectPII('Call us at 555-123-4567');
+      const filtered = filterAllowList(detections, ['555-123-4567']);
+      expect(filtered).toHaveLength(0);
+    });
+
+    it('matches with different formatting', () => {
+      const detections = detectPII('Call us at 555-123-4567');
+      // Allow list entry without dashes
+      const filtered = filterAllowList(detections, ['5551234567']);
+      expect(filtered).toHaveLength(0);
+    });
+
+    it('keeps detections not in allow list', () => {
+      const detections = detectPII('Call 555-123-4567 or 555-987-6543');
+      const filtered = filterAllowList(detections, ['5551234567']);
+      const phones = filtered.filter((d) => d.type === 'phone');
+      expect(phones.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  // ── Confidence thresholds ───────────────────────────────────────────────
+
+  describe('confidence thresholds', () => {
+    it('filters detections below threshold', () => {
+      const detections = detectPII('Call 555-123-4567');
+      // Set threshold very high
+      const filtered = filterByConfidence(detections, { phone: 0.99 });
+      const phones = filtered.filter((d) => d.type === 'phone');
+      expect(phones).toHaveLength(0);
+    });
+
+    it('keeps detections above threshold', () => {
+      const detections = detectPII('test@example.com');
+      const filtered = filterByConfidence(detections, { email: 0.5 });
+      expect(filtered.filter((d) => d.type === 'email')).toHaveLength(1);
+    });
+
+    it('does not affect types without a threshold', () => {
+      const detections = detectPII('test@example.com and 555-123-4567');
+      // Only set threshold for phone, email should pass through
+      const filtered = filterByConfidence(detections, { phone: 0.99 });
+      expect(filtered.filter((d) => d.type === 'email')).toHaveLength(1);
+    });
+  });
+
+  // ── Suppressive context ─────────────────────────────────────────────────
+
+  describe('suppressive context', () => {
+    it('reduces phone confidence near business terms', () => {
+      const text = 'Order tracking 555-123-4567';
+      const detections = detectPII(text);
+      const phone = detections.find((d) => d.type === 'phone');
+      if (phone) {
+        const suppressed = applySuppressiveContext(phone, text);
+        expect(suppressed.confidence).toBeLessThan(phone.confidence);
+      }
+    });
+
+    it('does not reduce confidence without business terms nearby', () => {
+      const text = 'My number is 555-123-4567';
+      const detections = detectPII(text);
+      const phone = detections.find((d) => d.type === 'phone');
+      if (phone) {
+        const result = applySuppressiveContext(phone, text);
+        expect(result.confidence).toBe(phone.confidence);
+      }
+    });
+
+    it('reduces SSN confidence near order-like terms', () => {
+      const text = 'Serial number 123-45-6789';
+      const detections = detectPII(text);
+      const ssn = detections.find((d) => d.type === 'ssn');
+      if (ssn) {
+        const suppressed = applySuppressiveContext(ssn, text);
+        expect(suppressed.confidence).toBeLessThan(ssn.confidence);
+      }
+    });
+
+    it('combined: suppressive context + threshold filters out FP', () => {
+      const text = 'Order tracking 555-123-4567';
+      let detections = detectPII(text);
+      detections = detections.map((d) => applySuppressiveContext(d, text));
+      detections = filterByConfidence(detections, { phone: 0.7 });
+      const phones = detections.filter((d) => d.type === 'phone');
+      expect(phones).toHaveLength(0);
     });
   });
 });

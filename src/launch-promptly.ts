@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventBatcher } from './batcher';
 import { calculateEventCost } from './internal/cost';
 import { fingerprintMessages } from './internal/fingerprint';
-import { detectPII, mergeDetections, type PIIDetection } from './internal/pii';
+import { detectPII, mergeDetections, applySuppressiveContext, filterAllowList, filterByConfidence, type PIIDetection } from './internal/pii';
 import { redactPII, deRedact, type RedactionStrategy } from './internal/redaction';
 import { detectInjection, mergeInjectionAnalyses, type InjectionAnalysis } from './internal/injection';
 import { CostGuard, type BudgetViolation } from './internal/cost-guard';
@@ -17,6 +17,7 @@ import { detectJailbreak, mergeJailbreakAnalyses, type JailbreakAnalysis } from 
 import { checkTopicGuard, type TopicViolation } from './internal/topic-guard';
 import { scanOutputSafety, type OutputSafetyThreat } from './internal/output-safety';
 import { detectPromptLeakage, type PromptLeakageResult } from './internal/prompt-leakage';
+import { resolveSecurityOptions } from './internal/presets';
 import { PromptInjectionError, CostLimitError, ContentViolationError, ModelPolicyError, OutputSchemaError, StreamAbortError, JailbreakError, TopicViolationError } from './errors';
 import { wrapAnthropicClient } from './providers/anthropic';
 import { wrapGeminiClient } from './providers/gemini';
@@ -263,7 +264,7 @@ export class LaunchPromptly {
     const traceIdTag = options.traceId;
     const spanNameTag = options.spanName;
     const als = this.als;
-    const security = options.security;
+    const security = options.security ? resolveSecurityOptions(options.security) : undefined;
 
     // Initialize cost guard if configured
     const costGuard = security?.costGuard
@@ -311,7 +312,10 @@ export class LaunchPromptly {
                         // Build a mutable copy of params for potential message redaction
                         let effectiveParams = params;
 
+                        const isShadow = security?.mode === 'shadow';
+
                         if (security) {
+
                           // 0a. Unicode sanitizer (must run first — clean input for all downstream)
                           if (security.unicodeSanitizer?.enabled !== false && security.unicodeSanitizer) {
                             const allInput = effectiveParams.messages.map((m) => m.content).join('\n');
@@ -324,14 +328,14 @@ export class LaunchPromptly {
                               emit('unicode.suspicious', { result: unicodeScanResult });
                               security.unicodeSanitizer.onDetect?.(unicodeScanResult);
 
-                              if (security.unicodeSanitizer.action === 'block') {
+                              if (!isShadow && security.unicodeSanitizer.action === 'block') {
                                 throw new Error(
                                   `Unicode threat detected: ${unicodeScanResult.threats.length} suspicious characters found`,
                                 );
                               }
 
                               // If action is 'strip', replace message content with sanitized text
-                              if (security.unicodeSanitizer.action === 'strip' && unicodeScanResult.sanitizedText != null) {
+                              if (!isShadow && security.unicodeSanitizer.action === 'strip' && unicodeScanResult.sanitizedText != null) {
                                 // Re-scan each message individually to get per-message sanitized text
                                 const sanitizedMessages: typeof effectiveParams.messages = [];
                                 for (const msg of effectiveParams.messages) {
@@ -353,9 +357,9 @@ export class LaunchPromptly {
                           if (security.modelPolicy) {
                             const violation = checkModelPolicy(params, security.modelPolicy);
                             if (violation) {
-                              emit('model.blocked', { violation });
+                              emit('model.blocked', { violation, mode: isShadow ? 'shadow' : 'enforce' });
                               security.modelPolicy.onViolation?.(violation);
-                              throw new ModelPolicyError(violation);
+                              if (!isShadow) throw new ModelPolicyError(violation);
                             }
                           }
 
@@ -373,9 +377,9 @@ export class LaunchPromptly {
                             });
 
                             if (costViolation && costGuard.shouldBlock) {
-                              emit('cost.exceeded', { violation: costViolation });
+                              emit('cost.exceeded', { violation: costViolation, mode: isShadow ? 'shadow' : 'enforce' });
                               security.costGuard?.onBudgetExceeded?.(costViolation);
-                              throw new CostLimitError(costViolation);
+                              if (!isShadow) throw new CostLimitError(costViolation);
                             }
                           }
 
@@ -412,6 +416,16 @@ export class LaunchPromptly {
                               inputPiiDetections = mergeDetections(inputPiiDetections, ...providerDets);
                             }
 
+                            // Apply suppressive context, allow list, and confidence thresholds
+                            const allMsgText = allMessageText;
+                            inputPiiDetections = inputPiiDetections.map((d) => applySuppressiveContext(d, allMsgText));
+                            if (security.pii?.allowList?.length) {
+                              inputPiiDetections = filterAllowList(inputPiiDetections, security.pii.allowList);
+                            }
+                            if (security.pii?.confidenceThresholds) {
+                              inputPiiDetections = filterByConfidence(inputPiiDetections, security.pii.confidenceThresholds);
+                            }
+
                             // Fire callback + guardrail event
                             if (inputPiiDetections.length > 0) {
                               emit('pii.detected', { detections: inputPiiDetections, direction: 'input' });
@@ -420,7 +434,7 @@ export class LaunchPromptly {
 
                             // Redact messages if configured
                             const redactionStrategy: RedactionStrategy = security.pii?.redaction ?? 'placeholder';
-                            if (inputPiiDetections.length > 0 && redactionStrategy !== 'none') {
+                            if (!isShadow && inputPiiDetections.length > 0 && redactionStrategy !== 'none') {
                               redactionApplied = true;
                               // Shared counters across all messages prevent placeholder collisions
                               // (e.g., two messages both having [EMAIL_1] for different emails)
@@ -464,13 +478,19 @@ export class LaunchPromptly {
                               emit('secret.detected', { detections: inputSecretDetections, direction: 'input' });
                               security.secretDetection.onDetect?.(inputSecretDetections);
 
-                              if (security.secretDetection.action === 'block') {
+                              if (!isShadow && security.secretDetection.action === 'block') {
                                 throw new Error(
                                   `Secrets detected in input: ${inputSecretDetections.map((d) => d.type).join(', ')}`,
                                 );
                               }
                             }
                           }
+
+                          // Extract system prompt for injection/jailbreak awareness
+                          const systemPromptText = params.messages
+                            .filter((m) => m.role === 'system')
+                            .map((m) => m.content)
+                            .join('\n');
 
                           // 4. Injection detection
                           if (security.injection?.enabled !== false) {
@@ -483,6 +503,7 @@ export class LaunchPromptly {
                             if (userMessages) {
                               injectionResult = detectInjection(userMessages, {
                                 blockThreshold: security.injection?.blockThreshold,
+                                systemPrompt: systemPromptText || undefined,
                               });
 
                               // Merge with ML providers
@@ -493,7 +514,7 @@ export class LaunchPromptly {
                                 }));
                                 injectionResult = mergeInjectionAnalyses(
                                   [injectionResult, ...providerResults],
-                                  { blockThreshold: security.injection?.blockThreshold },
+                                  { blockThreshold: security.injection?.blockThreshold, mergeStrategy: security.injection?.mergeStrategy },
                                 );
                               }
 
@@ -505,6 +526,7 @@ export class LaunchPromptly {
 
                               // Block if configured
                               if (
+                                !isShadow &&
                                 security.injection?.blockOnHighRisk &&
                                 injectionResult.action === 'block'
                               ) {
@@ -525,6 +547,7 @@ export class LaunchPromptly {
                               jailbreakResult = detectJailbreak(userMessages, {
                                 blockThreshold: security.jailbreak.blockThreshold,
                                 warnThreshold: security.jailbreak.warnThreshold,
+                                systemPrompt: systemPromptText || undefined,
                               });
 
                               // Merge with ML providers
@@ -535,7 +558,7 @@ export class LaunchPromptly {
                                 }));
                                 jailbreakResult = mergeJailbreakAnalyses(
                                   [jailbreakResult, ...providerResults],
-                                  { blockThreshold: security.jailbreak.blockThreshold },
+                                  { blockThreshold: security.jailbreak.blockThreshold, mergeStrategy: security.jailbreak.mergeStrategy },
                                 );
                               }
 
@@ -545,6 +568,7 @@ export class LaunchPromptly {
                               }
 
                               if (
+                                !isShadow &&
                                 security.jailbreak.blockOnDetection !== false &&
                                 jailbreakResult.action === 'block'
                               ) {
@@ -567,7 +591,7 @@ export class LaunchPromptly {
                               emit('content.violated', { violations: inputContentViolations, direction: 'input' });
                             }
 
-                            if (hasBlockingViolation(inputContentViolations, security.contentFilter)) {
+                            if (!isShadow && hasBlockingViolation(inputContentViolations, security.contentFilter)) {
                               security.contentFilter.onViolation?.(inputContentViolations[0]);
                               throw new ContentViolationError(inputContentViolations);
                             }
@@ -592,7 +616,7 @@ export class LaunchPromptly {
                               emit('topic.violated', { violation: topicViolationResult });
                               security.topicGuard.onViolation?.(topicViolationResult);
 
-                              if (security.topicGuard.action !== 'warn') {
+                              if (!isShadow && security.topicGuard.action !== 'warn') {
                                 throw new TopicViolationError(topicViolationResult);
                               }
                             }
@@ -614,7 +638,9 @@ export class LaunchPromptly {
 
                           if (security?.streamGuard) {
                             const engine = new StreamGuardEngine({
-                              streamGuard: security.streamGuard,
+                              streamGuard: isShadow
+                                ? { ...security.streamGuard, onViolation: 'flag' as const }
+                                : security.streamGuard,
                               pii: security.pii ? {
                                 types: security.pii.types,
                                 providers: security.pii.providers,
@@ -895,7 +921,7 @@ export class LaunchPromptly {
                               emit('output.unsafe', { threats: outputSafetyThreats });
                               security.outputSafety.onDetect?.(outputSafetyThreats);
 
-                              if (security.outputSafety.action === 'block') {
+                              if (!isShadow && security.outputSafety.action === 'block') {
                                 throw new Error(
                                   `Unsafe output detected: ${outputSafetyThreats.map((t) => t.category).join(', ')}`,
                                 );
@@ -914,7 +940,7 @@ export class LaunchPromptly {
                               emit('prompt.leaked', { result: promptLeakageResult });
                               security.promptLeakage.onDetect?.(promptLeakageResult);
 
-                              if (security.promptLeakage.blockOnLeak) {
+                              if (!isShadow && security.promptLeakage.blockOnLeak) {
                                 throw new Error(
                                   `System prompt leakage detected (similarity: ${promptLeakageResult.similarity.toFixed(2)})`,
                                 );
@@ -948,7 +974,7 @@ export class LaunchPromptly {
                             const validation = validateOutputSchema(responseText, security.outputSchema);
                             if (!validation.valid) {
                               emit('schema.invalid', { errors: validation.errors, responseText });
-                              if (security.outputSchema.blockOnInvalid) {
+                              if (!isShadow && security.outputSchema.blockOnInvalid) {
                                 throw new OutputSchemaError(validation.errors, responseText);
                               }
                             }

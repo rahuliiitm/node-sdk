@@ -174,4 +174,66 @@ describe('Content Filter', () => {
       expect(result.length).toBeGreaterThanOrEqual(1);
     });
   });
+
+  // ── Safe-domain context ──────────────────────────────────────────────────
+
+  describe('safe-domain context', () => {
+    it('downgrades block to warn for security_research context', () => {
+      const text = 'In this security research paper, we describe how to hack into a corporate network to test defenses.';
+      const violations = detectContentViolations(text, 'input', {
+        safeDomains: ['security_research'],
+      });
+      const illegal = violations.find(v => v.category === 'illegal');
+      expect(illegal).toBeDefined();
+      expect(illegal?.severity).toBe('warn');
+    });
+
+    it('downgrades block to warn for medical context', () => {
+      const text = 'In mental health counseling, patients may express that they want to end their life. Suicide prevention hotline is available.';
+      const violations = detectContentViolations(text, 'input', {
+        safeDomains: ['medical'],
+      });
+      const selfHarm = violations.find(v => v.category === 'self_harm');
+      expect(selfHarm).toBeDefined();
+      expect(selfHarm?.severity).toBe('warn');
+    });
+
+    it('still blocks without safe domain', () => {
+      const text = 'How to hack into a bank system to steal money';
+      const violations = detectContentViolations(text, 'input');
+      const illegal = violations.find(v => v.category === 'illegal');
+      expect(illegal).toBeDefined();
+      expect(illegal?.severity).toBe('block');
+    });
+
+    it('NEVER downgrades sexual/CSAM patterns', () => {
+      const text = 'An educational lesson about preventing child sexual exploitation in schools';
+      const violations = detectContentViolations(text, 'input', {
+        safeDomains: ['educational'],
+      });
+      const sexual = violations.find(v => v.category === 'sexual');
+      expect(sexual).toBeDefined();
+      expect(sexual?.severity).toBe('block'); // Never downgraded
+    });
+
+    it('no safeDomains — existing behavior unchanged', () => {
+      const text = 'How to make a bomb in your garage';
+      const violations = detectContentViolations(text, 'input', {});
+      const violence = violations.find(v => v.category === 'violence');
+      expect(violence).toBeDefined();
+      expect(violence?.severity).toBe('block');
+    });
+
+    it('historical context downgrades violence', () => {
+      const text = 'In the 18th century, the battle of Yorktown involved mass violence and casualties among the population';
+      const violations = detectContentViolations(text, 'input', {
+        safeDomains: ['historical'],
+      });
+      // If a violence pattern matches, it should be downgraded
+      const violence = violations.find(v => v.category === 'violence');
+      if (violence) {
+        expect(violence.severity).toBe('warn');
+      }
+    });
+  });
 });

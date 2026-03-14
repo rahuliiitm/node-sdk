@@ -15,6 +15,8 @@ export interface InjectionOptions {
   warnThreshold?: number;
   /** Threshold for 'block' action (default: 0.7) */
   blockThreshold?: number;
+  /** System prompt text — used to suppress role_manipulation matches consistent with the system prompt. */
+  systemPrompt?: string;
 }
 
 /** Provider interface for pluggable injection detectors (e.g., ML plugin). */
@@ -84,8 +86,8 @@ const RULES: InjectionRule[] = [
   {
     category: 'encoding_evasion',
     patterns: [
-      // Base64 blocks (32+ chars of base64 alphabet)
-      /[A-Za-z0-9+/=]{32,}/,
+      // Base64 blocks — require 44+ chars (32 bytes encoded) to avoid catching UUIDs/short hashes
+      /(?<![A-Za-z0-9_\-.])[A-Za-z0-9+/]{44,}={0,2}(?![A-Za-z0-9_\-.])/,
       // Excessive Unicode escape sequences
       /(?:\\u[0-9a-fA-F]{4}\s*){4,}/,
       // ROT13 instruction pattern
@@ -98,6 +100,50 @@ const RULES: InjectionRule[] = [
     weight: 0.25,
   },
 ];
+
+// ── Suppressive context: benign phrases that look like injection patterns ────
+
+const SUPPRESSIONS: Record<string, RegExp> = {
+  // "you are now" — benign when followed by status/state words
+  'role_manipulation:you_are_now':
+    /you\s+are\s+now\s+(?:connected|logged\s+in|enrolled|registered|signed\s+up|subscribed|verified|approved|ready|eligible|qualified|redirected|transferred|being\s+transferred|on\s+(?:the|a)\s+(?:waitlist|list|call)|part\s+of|able\s+to|set\s+up|all\s+set|good\s+to\s+go|in\s+(?:the|a)\s+(?:queue|line|group|meeting|session))/i,
+
+  // "act as" / "behave as" — benign in science/mechanical/business context
+  'role_manipulation:act_as':
+    /(?:acts?|behaves?|functions?|serves?|operates?|works?|acts)\s+as\s+(?:a\s+)?(?:catalyst|buffer|proxy|bridge|gateway|filter|intermediary|mediator|inhibitor|receptor|antenna|sensor|regulator|stabilizer|insulator|conductor|amplifier|deterrent|safeguard|backup|failover|fallback|barrier|layer|wrapper|adapter|interface|handler|router|balancer|coordinator|trigger|signal|marker|indicator|placeholder)/i,
+
+  // "jailbreak" — benign in iOS/device/security-article context
+  'role_manipulation:jailbreak':
+    /(?:ios|iphone|ipad|ipod|android|device|phone|mobile|root(?:ing|ed)?|unlock(?:ing|ed)?|firmware|bootloader|tweak|cydia|sileo|checkra1n|unc0ver)\s+.{0,40}jailbreak|jailbreak\s+.{0,40}(?:ios|iphone|ipad|ipod|android|device|phone|mobile|detection|prevention|security|risk|policy|check|protect|block|patch|fix|vulnerabilit)/i,
+};
+
+/**
+ * Check whether a match should be suppressed because the surrounding context
+ * indicates benign usage (e.g., "you are now connected" is not role manipulation).
+ */
+function shouldSuppress(category: string, text: string, matchIndex: number): boolean {
+  const start = Math.max(0, matchIndex - 40);
+  const end = Math.min(text.length, matchIndex + 120);
+  const context = text.slice(start, end);
+
+  for (const [key, suppressRe] of Object.entries(SUPPRESSIONS)) {
+    if (key.startsWith(category + ':') && suppressRe.test(context)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Check whether a base64-like match is actually a JWT, UUID, or hex hash. */
+function isLikelyBenignEncoded(text: string, matchIndex: number): boolean {
+  // Look for JWT context: dots separating base64url segments
+  const before = text.slice(Math.max(0, matchIndex - 100), matchIndex);
+  const after = text.slice(matchIndex, Math.min(text.length, matchIndex + 200));
+  const around = before + after;
+  // JWT pattern: three dot-separated base64url segments
+  if (/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/.test(around)) return true;
+  return false;
+}
 
 // ── Unicode / homoglyph normalization ────────────────────────────────────────
 
@@ -118,6 +164,87 @@ function normalizeText(text: string): string {
     normalized = normalized.replaceAll(glyph, ascii);
   }
   return normalized;
+}
+
+// ── System prompt awareness ──────────────────────────────────────────────────
+
+/**
+ * Extract key role/behavior phrases from the system prompt.
+ * Used to suppress role_manipulation matches that are consistent with the system prompt.
+ */
+export function extractSystemRoles(systemPrompt: string): string[] {
+  if (!systemPrompt) return [];
+  const roles: string[] = [];
+
+  // "You are a/an [ROLE]"
+  const youAreRe = /you\s+are\s+(?:a|an)\s+([^.,:;!?\n]{3,40})/gi;
+  let m: RegExpExecArray | null;
+  while ((m = youAreRe.exec(systemPrompt)) !== null) {
+    roles.push(m[0].toLowerCase());
+  }
+
+  // "Act as a/an [ROLE]"
+  const actAsRe = /act\s+as\s+(?:a|an)?\s*([^.,:;!?\n]{3,40})/gi;
+  while ((m = actAsRe.exec(systemPrompt)) !== null) {
+    roles.push(m[0].toLowerCase());
+  }
+
+  // "Your role is [ROLE]"
+  const yourRoleRe = /your\s+role\s+is\s+(?:to\s+)?([^.,:;!?\n]{3,40})/gi;
+  while ((m = yourRoleRe.exec(systemPrompt)) !== null) {
+    roles.push(m[0].toLowerCase());
+  }
+
+  // "Behave as a [ROLE]"
+  const behaveAsRe = /behave\s+as\s+(?:a|an)?\s*([^.,:;!?\n]{3,40})/gi;
+  while ((m = behaveAsRe.exec(systemPrompt)) !== null) {
+    roles.push(m[0].toLowerCase());
+  }
+
+  return roles;
+}
+
+/** Strip role-verb prefixes and articles, then trim at stop words to get the core noun phrase. */
+function extractRoleNoun(text: string): string {
+  let noun = text
+    .replace(/^(?:you\s+are\s+(?:now\s+)?|act\s+as\s+|behave\s+as\s+|pretend\s+(?:you\s+are|to\s+be)\s+)/i, '')
+    .replace(/^(?:a|an|the)\s+/i, '')
+    .toLowerCase()
+    .trim();
+  // Trim at common stop words that follow the role noun
+  noun = noun.replace(/\s+(?:and|who|that|which|when|where|for|to|in|on|with|helping|responding|answering)\b.*$/i, '');
+  return noun.trim();
+}
+
+/**
+ * Extract the full role phrase from the text around a match.
+ * The regex match may only capture the prefix ("act as "), so we grab
+ * additional words after the match to get the role noun.
+ */
+function extractFullRolePhrase(text: string, matchIndex: number, matchLength: number): string {
+  const end = Math.min(text.length, matchIndex + matchLength + 60);
+  const phrase = text.slice(matchIndex, end);
+  const trimmed = phrase.match(/^[^.,:;!?\n]+/)?.[0] ?? phrase;
+  return trimmed.trim();
+}
+
+/**
+ * Check if a matched role phrase is consistent with one of the system prompt roles.
+ * Compares extracted role nouns — if the user's role noun is found within a system role
+ * (or vice versa), the match is considered consistent and should be suppressed.
+ */
+function isConsistentWithSystem(text: string, matchIndex: number, matchLength: number, systemRoles: string[]): boolean {
+  if (systemRoles.length === 0) return false;
+  const fullPhrase = extractFullRolePhrase(text, matchIndex, matchLength);
+  const matchNoun = extractRoleNoun(fullPhrase);
+  if (!matchNoun || matchNoun.length < 3) return false;
+
+  for (const role of systemRoles) {
+    const roleNoun = extractRoleNoun(role);
+    if (!roleNoun) continue;
+    if (roleNoun.includes(matchNoun) || matchNoun.includes(roleNoun)) return true;
+  }
+  return false;
 }
 
 // ── Detection ───────────────────────────────────────────────────────────────
@@ -145,6 +272,9 @@ export function detectInjection(
   const warnThreshold = options?.warnThreshold ?? 0.3;
   const blockThreshold = options?.blockThreshold ?? 0.7;
 
+  // Extract system roles for consistent-role suppression
+  const systemRoles = options?.systemPrompt ? extractSystemRoles(options.systemPrompt) : [];
+
   const triggered: string[] = [];
   let totalScore = 0;
 
@@ -156,7 +286,14 @@ export function detectInjection(
       // Reset lastIndex for global patterns
       if (pattern.global) pattern.lastIndex = 0;
 
-      if (pattern.test(normalizedText)) {
+      const match = pattern.exec(normalizedText);
+      if (match) {
+        // Check suppressive context before counting this match
+        if (shouldSuppress(rule.category, normalizedText, match.index)) continue;
+        // Check benign encoded content (JWTs, etc.) for encoding_evasion
+        if (rule.category === 'encoding_evasion' && isLikelyBenignEncoded(normalizedText, match.index)) continue;
+        // Check system prompt consistency for role_manipulation
+        if (rule.category === 'role_manipulation' && systemRoles.length > 0 && isConsistentWithSystem(normalizedText, match.index, match[0].length, systemRoles)) continue;
         ruleTriggered = true;
         matchCount++;
       }
@@ -188,13 +325,36 @@ export function detectInjection(
   return { riskScore: roundedScore, triggered, action };
 }
 
+export type MergeStrategy = 'max' | 'weighted_average' | 'unanimous';
+
+/**
+ * Merge multiple risk scores according to the selected strategy.
+ */
+function mergeScores(scores: number[], strategy: MergeStrategy): number {
+  if (scores.length <= 1) return scores[0] ?? 0;
+
+  switch (strategy) {
+    case 'weighted_average': {
+      // First provider (rules) gets 0.6 weight, each additional splits 0.4
+      const ruleWeight = 0.6;
+      const mlWeight = 0.4 / (scores.length - 1);
+      return scores[0] * ruleWeight + scores.slice(1).reduce((s, v) => s + v * mlWeight, 0);
+    }
+    case 'unanimous':
+      // All providers must agree — use minimum score
+      return Math.min(...scores);
+    default: // 'max'
+      return Math.max(...scores);
+  }
+}
+
 /**
  * Merge results from multiple injection detectors.
- * Takes the maximum risk score and unions all triggered categories.
+ * Uses the selected merge strategy (default: 'max') and unions all triggered categories.
  */
 export function mergeInjectionAnalyses(
   analyses: InjectionAnalysis[],
-  options?: InjectionOptions,
+  options?: InjectionOptions & { mergeStrategy?: MergeStrategy },
 ): InjectionAnalysis {
   if (analyses.length === 0) {
     return { riskScore: 0, triggered: [], action: 'allow' };
@@ -202,20 +362,22 @@ export function mergeInjectionAnalyses(
 
   const warnThreshold = options?.warnThreshold ?? 0.3;
   const blockThreshold = options?.blockThreshold ?? 0.7;
+  const strategy = options?.mergeStrategy ?? 'max';
 
-  const maxScore = Math.max(...analyses.map((a) => a.riskScore));
+  const scores = analyses.map((a) => a.riskScore);
+  const mergedScore = Math.round(mergeScores(scores, strategy) * 100) / 100;
   const allTriggered = [...new Set(analyses.flatMap((a) => a.triggered))];
 
   let action: 'allow' | 'warn' | 'block';
-  if (maxScore >= blockThreshold) {
+  if (mergedScore >= blockThreshold) {
     action = 'block';
-  } else if (maxScore >= warnThreshold) {
+  } else if (mergedScore >= warnThreshold) {
     action = 'warn';
   } else {
     action = 'allow';
   }
 
-  return { riskScore: maxScore, triggered: allTriggered, action };
+  return { riskScore: mergedScore, triggered: allTriggered, action };
 }
 
 /**

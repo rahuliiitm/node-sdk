@@ -10,12 +10,17 @@ export type ContentCategory =
   | 'self_harm'
   | 'illegal';
 
+/** Safe domains — when domain context detected, downgrade 'block' to 'warn'. */
+export type SafeDomain = 'medical' | 'educational' | 'security_research' | 'news' | 'historical' | 'fiction';
+
 export interface ContentFilterOptions {
   enabled?: boolean;
   categories?: ContentCategory[];
   customPatterns?: CustomPattern[];
   blockOnViolation?: boolean;
   onViolation?: (violation: ContentViolation) => void;
+  /** Safe domains — when domain context is detected near a match, downgrade 'block' to 'warn'. */
+  safeDomains?: SafeDomain[];
 }
 
 export interface CustomPattern {
@@ -108,6 +113,54 @@ const CATEGORY_RULES: CategoryRule[] = [
   },
 ];
 
+// ── Safe-domain context keywords ─────────────────────────────────────────────
+
+const DOMAIN_KEYWORDS: Record<SafeDomain, RegExp> = {
+  medical: /\b(?:patient|clinical|diagnosis|symptom|treatment|therapy|medical|hospital|doctor|nurse|physician|prescription|dosage|healthcare|prevention|intervention|counseling|hotline|crisis\s+line|mental\s+health|disorder|syndrome)\b/i,
+
+  educational: /\b(?:lesson|curriculum|course|student|teacher|professor|lecture|study|research|academic|textbook|exam|assignment|university|school|classroom|syllabus|thesis|dissertation)\b/i,
+
+  security_research: /\b(?:vulnerability|CVE|penetration\s+test|pentest|security\s+audit|threat\s+model|red\s+team|blue\s+team|CTF|capture\s+the\s+flag|OWASP|security\s+research|bug\s+bounty|responsible\s+disclosure|patch|mitigation|defense|detection|prevention|firewall|IDS|antivirus)\b/i,
+
+  news: /\b(?:reported|according\s+to|news|journalist|article|press|media|coverage|investigation|headline|breaking|sources?\s+(?:say|said|report)|alleged|incident|authorities)\b/i,
+
+  historical: /\b(?:historical|century|era|ancient|medieval|war\s+of|battle\s+of|history\s+of|in\s+\d{3,4}|historians?|archaeological|civilization|dynasty|empire|colonial|revolution)\b/i,
+
+  fiction: /\b(?:novel|fiction|story|character|protagonist|antagonist|plot|chapter|narrative|fantasy|sci-fi|screenplay|movie|film|book|author|wrote|writing\s+a)\b/i,
+};
+
+/**
+ * Apply safe-domain context to violations.
+ * If a blocking violation is near domain context keywords, downgrade to 'warn'.
+ * IMPORTANT: 'sexual' category (CSAM-related) is NEVER downgraded.
+ */
+function applyDomainContext(
+  violations: ContentViolation[],
+  text: string,
+  safeDomains?: SafeDomain[],
+): ContentViolation[] {
+  if (!safeDomains || safeDomains.length === 0) return violations;
+
+  return violations.map(v => {
+    if (v.severity !== 'block') return v;
+    // Never downgrade CSAM patterns
+    if (v.category === 'sexual') return v;
+
+    const matchIdx = text.indexOf(v.matched);
+    if (matchIdx === -1) return v;
+    const contextStart = Math.max(0, matchIdx - 200);
+    const contextEnd = Math.min(text.length, matchIdx + v.matched.length + 200);
+    const context = text.slice(contextStart, contextEnd);
+
+    for (const domain of safeDomains) {
+      if (DOMAIN_KEYWORDS[domain]?.test(context)) {
+        return { ...v, severity: 'warn' as const };
+      }
+    }
+    return v;
+  });
+}
+
 // ── Detection ───────────────────────────────────────────────────────────────
 
 /**
@@ -160,7 +213,8 @@ export function detectContentViolations(
     }
   }
 
-  return violations;
+  // Apply safe-domain context (downgrades 'block' → 'warn' when domain context found)
+  return applyDomainContext(violations, text, options?.safeDomains);
 }
 
 /**

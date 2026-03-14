@@ -456,6 +456,60 @@ export function createCustomDetector(patterns: CustomPIIPattern[]): PIIDetectorP
   };
 }
 
+// ── Suppressive context: business terms near PII matches reduce confidence ──
+
+const SUPPRESSIVE_CONTEXT: Partial<Record<PIIType, RegExp>> = {
+  phone: /\b(?:order|sku|tracking|invoice|reference|ref|ticket|case|account|id|code|pin|ext(?:ension)?|fax|zip|postal)\b/i,
+  ssn: /\b(?:order|tracking|invoice|reference|serial|model|sku|part|item|product|account|routing)\b/i,
+  credit_card: /\b(?:order|tracking|serial|model|sku|part|item|product|barcode)\b/i,
+};
+
+/**
+ * Apply suppressive context: if business terms appear near a PII match,
+ * reduce its confidence by 0.3 (floor 0.1).
+ */
+export function applySuppressiveContext(
+  detection: PIIDetection,
+  fullText: string,
+): PIIDetection {
+  const suppressRe = SUPPRESSIVE_CONTEXT[detection.type];
+  if (!suppressRe) return detection;
+  const preceding = fullText.slice(Math.max(0, detection.start - 60), detection.start);
+  if (suppressRe.test(preceding)) {
+    return { ...detection, confidence: Math.max(detection.confidence - 0.3, 0.1) };
+  }
+  return detection;
+}
+
+/**
+ * Filter detections against an allow list.
+ * Normalizes both allow list entries and detected values by stripping
+ * formatting characters (spaces, dashes, dots, parens) for flexible matching.
+ */
+export function filterAllowList(
+  detections: PIIDetection[],
+  allowList: string[],
+): PIIDetection[] {
+  if (!allowList.length) return detections;
+  const normalize = (s: string) => s.replace(/[\s\-().]/g, '');
+  const allowSet = new Set(allowList.map(normalize));
+  return detections.filter((d) => !allowSet.has(normalize(d.value)));
+}
+
+/**
+ * Filter detections by per-type confidence thresholds.
+ * Any detection below its type's threshold is discarded.
+ */
+export function filterByConfidence(
+  detections: PIIDetection[],
+  thresholds: Partial<Record<PIIType, number>>,
+): PIIDetection[] {
+  return detections.filter((d) => {
+    const minConf = thresholds[d.type];
+    return minConf === undefined || d.confidence >= minConf;
+  });
+}
+
 /**
  * Built-in regex PII detector implementing the provider interface.
  */

@@ -24,6 +24,7 @@ import { StreamGuardEngine, type StreamSecurityReport } from '../internal/stream
 import { checkModelPolicy } from '../internal/model-policy';
 import { validateOutputSchema } from '../internal/schema-validator';
 import { PromptInjectionError, CostLimitError, ContentViolationError, ModelPolicyError, OutputSchemaError } from '../errors';
+import { resolveSecurityOptions } from '../internal/presets';
 
 // ── Gemini Types ─────────────────────────────────────────────────────────────
 
@@ -251,7 +252,7 @@ export function wrapGeminiClient<T extends object>(
   const featureTag = options.feature;
   const traceIdTag = options.traceId;
   const spanNameTag = options.spanName;
-  const security = options.security;
+  const security = options.security ? resolveSecurityOptions(options.security) : undefined;
 
   const costGuard = security?.costGuard ? new CostGuard(security.costGuard) : null;
 
@@ -280,6 +281,7 @@ export function wrapGeminiClient<T extends object>(
                 const redactionMapping = new Map<string, string>();
                 let redactionApplied = false;
                 let effectiveParams = params;
+                const isShadow = security?.mode === 'shadow';
 
                 if (security) {
                   // 0. Model policy enforcement (first check)
@@ -295,7 +297,7 @@ export function wrapGeminiClient<T extends object>(
                     if (violation) {
                       emit?.('model.blocked', { violation });
                       security.modelPolicy.onViolation?.(violation);
-                      throw new ModelPolicyError(violation);
+                      if (!isShadow) throw new ModelPolicyError(violation);
                     }
                   }
 
@@ -313,7 +315,7 @@ export function wrapGeminiClient<T extends object>(
                     if (costViolation && costGuard.shouldBlock) {
                       emit?.('cost.exceeded', { violation: costViolation });
                       security.costGuard?.onBudgetExceeded?.(costViolation);
-                      throw new CostLimitError(costViolation);
+                      if (!isShadow) throw new CostLimitError(costViolation);
                     }
                   }
 
@@ -337,7 +339,7 @@ export function wrapGeminiClient<T extends object>(
                     }
 
                     const redactionStrategy = security.pii?.redaction ?? 'placeholder';
-                    if (inputPiiDetections.length > 0 && redactionStrategy !== 'none') {
+                    if (!isShadow && inputPiiDetections.length > 0 && redactionStrategy !== 'none') {
                       redactionApplied = true;
                       const contents = normalizeContents(params.contents);
                       const redactedContents = await Promise.all(contents.map((c) =>
@@ -370,12 +372,16 @@ export function wrapGeminiClient<T extends object>(
                     }
                   }
 
+                  // Extract system prompt for injection awareness
+                  const { systemText: geminiSystemPrompt } = extractGeminiMessageTexts(params);
+
                   // 4. Injection detection
                   if (security.injection?.enabled !== false) {
                     const { userText } = extractGeminiMessageTexts(params);
                     if (userText) {
                       injectionResult = detectInjection(userText, {
                         blockThreshold: security.injection?.blockThreshold,
+                        systemPrompt: geminiSystemPrompt || undefined,
                       });
                       if (security.injection?.providers?.length) {
                         const providerResults = await Promise.all(security.injection.providers.map(async (p) => {
@@ -384,14 +390,14 @@ export function wrapGeminiClient<T extends object>(
                         }));
                         injectionResult = mergeInjectionAnalyses(
                           [injectionResult, ...providerResults],
-                          { blockThreshold: security.injection?.blockThreshold },
+                          { blockThreshold: security.injection?.blockThreshold, mergeStrategy: security.injection?.mergeStrategy },
                         );
                       }
                       if (injectionResult.riskScore > 0) {
                         emit?.('injection.detected', { analysis: injectionResult });
                       }
                       security.injection?.onDetect?.(injectionResult);
-                      if (security.injection?.blockOnHighRisk && injectionResult.action === 'block') {
+                      if (!isShadow && security.injection?.blockOnHighRisk && injectionResult.action === 'block') {
                         emit?.('injection.blocked', { analysis: injectionResult });
                         throw new PromptInjectionError(injectionResult);
                       }
@@ -405,7 +411,7 @@ export function wrapGeminiClient<T extends object>(
                     if (inputContentViolations.length > 0) {
                       emit?.('content.violated', { violations: inputContentViolations, direction: 'input' });
                     }
-                    if (hasBlockingViolation(inputContentViolations, security.contentFilter)) {
+                    if (!isShadow && hasBlockingViolation(inputContentViolations, security.contentFilter)) {
                       security.contentFilter.onViolation?.(inputContentViolations[0]);
                       throw new ContentViolationError(inputContentViolations);
                     }
@@ -426,7 +432,9 @@ export function wrapGeminiClient<T extends object>(
 
                   if (security?.streamGuard) {
                     const engine = new StreamGuardEngine({
-                      streamGuard: security.streamGuard,
+                      streamGuard: isShadow
+                        ? { ...security.streamGuard, onViolation: 'flag' as const }
+                        : security.streamGuard,
                       pii: security.pii ? {
                         types: security.pii.types,
                         providers: security.pii.providers,
@@ -595,7 +603,7 @@ export function wrapGeminiClient<T extends object>(
                     const validation = validateOutputSchema(responseText, security.outputSchema);
                     if (!validation.valid) {
                       emit?.('schema.invalid', { errors: validation.errors, responseText });
-                      if (security.outputSchema.blockOnInvalid) {
+                      if (!isShadow && security.outputSchema.blockOnInvalid) {
                         throw new OutputSchemaError(validation.errors, responseText);
                       }
                     }

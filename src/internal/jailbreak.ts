@@ -17,6 +17,8 @@ export interface JailbreakOptions {
   warnThreshold?: number;
   /** Threshold for 'block' action (default: 0.7) */
   blockThreshold?: number;
+  /** System prompt text — used to suppress persona_assignment matches consistent with the system prompt. */
+  systemPrompt?: string;
 }
 
 /** Provider interface for pluggable jailbreak detectors (e.g., ML plugin). */
@@ -41,7 +43,8 @@ const KNOWN_TEMPLATE_PATTERNS: RegExp[] = [
   /Developer\s+Mode/i,
   /Evil\s+Confidant/i,
   /BetterDAN/i,
-  /\bMaximum\b/i,
+  // Require "Maximum" to be followed by a jailbreak-related word to avoid FP on "maximum capacity"
+  /\bMaximum\b\s+(?:mode|override|power|token|capability|freedom|unrestricted)/i,
   /Do\s+Anything\s+Now/i,
   /Superior\s+AI/i,
   /developer\s+mode\s+enabled/i,
@@ -112,6 +115,73 @@ const RULES: JailbreakRule[] = [
     weight: 0.3,
   },
 ];
+
+// ── Suppressive context: benign phrases that look like jailbreak patterns ────
+
+const SUPPRESSIONS: Record<string, RegExp> = {
+  // "you are now" — benign when followed by status/state words
+  'persona_assignment:you_are_now':
+    /you\s+are\s+now\s+(?:connected|logged\s+in|enrolled|registered|signed\s+up|subscribed|verified|approved|ready|eligible|qualified|redirected|transferred|being\s+transferred|on\s+(?:the|a)\s+(?:waitlist|list|call)|part\s+of|able\s+to|set\s+up|all\s+set|good\s+to\s+go|in\s+(?:the|a)\s+(?:queue|line|group|meeting|session))/i,
+};
+
+/**
+ * Check whether a match should be suppressed because the surrounding context
+ * indicates benign usage (e.g., "you are now connected" is not persona assignment).
+ */
+function shouldSuppress(category: string, text: string, matchIndex: number): boolean {
+  const start = Math.max(0, matchIndex - 40);
+  const end = Math.min(text.length, matchIndex + 120);
+  const context = text.slice(start, end);
+
+  for (const [key, suppressRe] of Object.entries(SUPPRESSIONS)) {
+    if (key.startsWith(category + ':') && suppressRe.test(context)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// ── System prompt awareness (re-use extraction from injection module) ────────
+
+import { extractSystemRoles } from './injection';
+
+/** Strip role-verb prefixes and articles, then trim at stop words to get the core noun phrase. */
+function extractRoleNoun(text: string): string {
+  let noun = text
+    .replace(/^(?:you\s+are\s+(?:now\s+)?|act\s+as\s+|behave\s+as\s+|pretend\s+(?:you\s+are|to\s+be)\s+|roleplay\s+as\s+)/i, '')
+    .replace(/^(?:a|an|the)\s+/i, '')
+    .toLowerCase()
+    .trim();
+  noun = noun.replace(/\s+(?:and|who|that|which|when|where|for|to|in|on|with|helping|responding|answering)\b.*$/i, '');
+  return noun.trim();
+}
+
+/**
+ * Extract the full role phrase from the text around a match.
+ */
+function extractFullRolePhrase(text: string, matchIndex: number, matchLength: number): string {
+  const end = Math.min(text.length, matchIndex + matchLength + 60);
+  const phrase = text.slice(matchIndex, end);
+  const trimmed = phrase.match(/^[^.,:;!?\n]+/)?.[0] ?? phrase;
+  return trimmed.trim();
+}
+
+/**
+ * Check if a matched persona phrase is consistent with one of the system prompt roles.
+ */
+function isConsistentWithSystem(text: string, matchIndex: number, matchLength: number, systemRoles: string[]): boolean {
+  if (systemRoles.length === 0) return false;
+  const fullPhrase = extractFullRolePhrase(text, matchIndex, matchLength);
+  const matchNoun = extractRoleNoun(fullPhrase);
+  if (!matchNoun || matchNoun.length < 3) return false;
+
+  for (const role of systemRoles) {
+    const roleNoun = extractRoleNoun(role);
+    if (!roleNoun) continue;
+    if (roleNoun.includes(matchNoun) || matchNoun.includes(roleNoun)) return true;
+  }
+  return false;
+}
 
 // ── Base64 payload decoding ─────────────────────────────────────────────────
 
@@ -191,6 +261,9 @@ export function detectJailbreak(
   const warnThreshold = options?.warnThreshold ?? 0.3;
   const blockThreshold = options?.blockThreshold ?? 0.7;
 
+  // Extract system roles for consistent-role suppression
+  const systemRoles = options?.systemPrompt ? extractSystemRoles(options.systemPrompt) : [];
+
   const triggered: string[] = [];
   let totalScore = 0;
   const decodedPayloads: string[] = [];
@@ -205,7 +278,12 @@ export function detectJailbreak(
 
     for (const pattern of rule.patterns) {
       if (pattern.global) pattern.lastIndex = 0;
-      if (pattern.test(scanText)) {
+      const match = pattern.exec(scanText);
+      if (match) {
+        // Check suppressive context before counting this match
+        if (shouldSuppress(rule.category, scanText, match.index)) continue;
+        // Check system prompt consistency for persona_assignment
+        if (rule.category === 'persona_assignment' && systemRoles.length > 0 && isConsistentWithSystem(scanText, match.index, match[0].length, systemRoles)) continue;
         ruleTriggered = true;
         matchCount++;
       }
@@ -274,13 +352,34 @@ export function detectJailbreak(
   return result;
 }
 
+export type MergeStrategy = 'max' | 'weighted_average' | 'unanimous';
+
+/**
+ * Merge multiple risk scores according to the selected strategy.
+ */
+function mergeScores(scores: number[], strategy: MergeStrategy): number {
+  if (scores.length <= 1) return scores[0] ?? 0;
+
+  switch (strategy) {
+    case 'weighted_average': {
+      const ruleWeight = 0.6;
+      const mlWeight = 0.4 / (scores.length - 1);
+      return scores[0] * ruleWeight + scores.slice(1).reduce((s, v) => s + v * mlWeight, 0);
+    }
+    case 'unanimous':
+      return Math.min(...scores);
+    default:
+      return Math.max(...scores);
+  }
+}
+
 /**
  * Merge results from multiple jailbreak detectors.
- * Takes the maximum risk score and unions all triggered categories.
+ * Uses the selected merge strategy (default: 'max') and unions all triggered categories.
  */
 export function mergeJailbreakAnalyses(
   analyses: JailbreakAnalysis[],
-  options?: JailbreakOptions,
+  options?: JailbreakOptions & { mergeStrategy?: MergeStrategy },
 ): JailbreakAnalysis {
   if (analyses.length === 0) {
     return { riskScore: 0, triggered: [], action: 'allow' };
@@ -288,23 +387,25 @@ export function mergeJailbreakAnalyses(
 
   const warnThreshold = options?.warnThreshold ?? 0.3;
   const blockThreshold = options?.blockThreshold ?? 0.7;
+  const strategy = options?.mergeStrategy ?? 'max';
 
-  const maxScore = Math.max(...analyses.map((a) => a.riskScore));
+  const scores = analyses.map((a) => a.riskScore);
+  const mergedScore = Math.round(mergeScores(scores, strategy) * 100) / 100;
   const allTriggered = [...new Set(analyses.flatMap((a) => a.triggered))];
   const allDecoded = analyses
     .flatMap((a) => a.decodedPayloads ?? [])
     .filter((v, i, arr) => arr.indexOf(v) === i);
 
   let action: 'allow' | 'warn' | 'block';
-  if (maxScore >= blockThreshold) {
+  if (mergedScore >= blockThreshold) {
     action = 'block';
-  } else if (maxScore >= warnThreshold) {
+  } else if (mergedScore >= warnThreshold) {
     action = 'warn';
   } else {
     action = 'allow';
   }
 
-  const result: JailbreakAnalysis = { riskScore: maxScore, triggered: allTriggered, action };
+  const result: JailbreakAnalysis = { riskScore: mergedScore, triggered: allTriggered, action };
   if (allDecoded.length > 0) {
     result.decodedPayloads = allDecoded;
   }

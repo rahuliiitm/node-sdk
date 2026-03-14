@@ -22,6 +22,10 @@ export interface WrapOptions {
 
 /** Security configuration for the wrap() pipeline. */
 export interface SecurityOptions {
+  /** 'enforce' (default) = normal behavior. 'shadow' = detect + emit events, never block or redact. */
+  mode?: 'enforce' | 'shadow';
+  /** Named preset that fills in defaults. Individual overrides take priority. */
+  preset?: import('./internal/presets').SensitivityPreset;
   pii?: PIISecurityOptions;
   injection?: InjectionSecurityOptions;
   jailbreak?: JailbreakSecurityOptions;
@@ -47,6 +51,8 @@ export interface JailbreakSecurityOptions {
   blockOnDetection?: boolean;
   providers?: import('./internal/jailbreak').JailbreakDetectorProvider[];
   onDetect?: (analysis: import('./internal/jailbreak').JailbreakAnalysis) => void;
+  /** Merge strategy when multiple providers are used. Default: 'max'. */
+  mergeStrategy?: 'max' | 'weighted_average' | 'unanimous';
 }
 
 export interface UnicodeSanitizerSecurityOptions {
@@ -138,6 +144,10 @@ export interface PIISecurityOptions {
   scanResponse?: boolean;
   providers?: import('./internal/pii').PIIDetectorProvider[];
   onDetect?: (detections: import('./internal/pii').PIIDetection[]) => void;
+  /** Exact values to ignore (e.g., known company phone numbers, test SSNs). */
+  allowList?: string[];
+  /** Minimum confidence per PII type. Detections below this are discarded. */
+  confidenceThresholds?: Partial<Record<import('./internal/pii').PIIType, number>>;
 }
 
 export interface InjectionSecurityOptions {
@@ -146,6 +156,8 @@ export interface InjectionSecurityOptions {
   blockOnHighRisk?: boolean;
   providers?: import('./internal/injection').InjectionDetectorProvider[];
   onDetect?: (analysis: import('./internal/injection').InjectionAnalysis) => void;
+  /** Merge strategy when multiple providers are used. Default: 'max'. */
+  mergeStrategy?: 'max' | 'weighted_average' | 'unanimous';
 }
 
 /** Context propagated via AsyncLocalStorage through withContext() */
