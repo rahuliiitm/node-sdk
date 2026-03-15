@@ -69,6 +69,10 @@ export interface JailbreakSecurityOptions {
   onDetect?: (analysis: import('./internal/jailbreak').JailbreakAnalysis) => void;
   /** Merge strategy when multiple providers are used. Default: 'max'. */
   mergeStrategy?: 'max' | 'weighted_average' | 'unanimous';
+  /** Enable cascade: skip ML providers when regex gives a confident result. Default: true when providers are set. */
+  cascade?: boolean;
+  /** Thresholds for cascade skip logic. */
+  cascadeThresholds?: CascadeThresholds;
 }
 
 export interface UnicodeSanitizerSecurityOptions {
@@ -166,6 +170,14 @@ export interface PIISecurityOptions {
   confidenceThresholds?: Partial<Record<import('./internal/pii').PIIType, number>>;
 }
 
+/** Thresholds for cascade logic — skip ML when regex is confident. */
+export interface CascadeThresholds {
+  /** Skip ML if regex risk score is above this value. Default: 0.85 */
+  skipAbove?: number;
+  /** Skip ML if regex risk score is below this value. Default: 0.10 */
+  skipBelow?: number;
+}
+
 export interface InjectionSecurityOptions {
   enabled?: boolean;
   blockThreshold?: number;
@@ -174,6 +186,10 @@ export interface InjectionSecurityOptions {
   onDetect?: (analysis: import('./internal/injection').InjectionAnalysis) => void;
   /** Merge strategy when multiple providers are used. Default: 'max'. */
   mergeStrategy?: 'max' | 'weighted_average' | 'unanimous';
+  /** Enable cascade: skip ML providers when regex gives a confident result. Default: true when providers are set. */
+  cascade?: boolean;
+  /** Thresholds for cascade skip logic. */
+  cascadeThresholds?: CascadeThresholds;
 }
 
 /** Context propagated via AsyncLocalStorage through withContext() */

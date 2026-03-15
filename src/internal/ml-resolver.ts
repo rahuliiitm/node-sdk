@@ -71,14 +71,22 @@ export async function createMLProviders(
   const guardrails = new Set(resolveGuardrailList(useML));
   if (guardrails.size === 0) return {};
 
-  // Verify dependency availability once upfront
+  // Verify at least one ML runtime is available
+  let hasOnnx = false;
   try {
-    await import('@huggingface/transformers');
-  } catch {
-    throw new Error(
-      'useML requires @huggingface/transformers. ' +
-      'Install with: npm install @huggingface/transformers',
-    );
+    await import('onnxruntime-node');
+    hasOnnx = true;
+  } catch { /* not installed */ }
+
+  if (!hasOnnx) {
+    try {
+      await import('@huggingface/transformers');
+    } catch {
+      throw new Error(
+        'useML requires onnxruntime-node (recommended) or @huggingface/transformers. ' +
+        'Install with: npm install onnxruntime-node @huggingface/transformers',
+      );
+    }
   }
 
   const result: ResolvedMLProviders = {};

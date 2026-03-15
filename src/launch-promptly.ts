@@ -525,16 +525,24 @@ export class LaunchPromptly {
                                 systemPrompt: systemPromptText || undefined,
                               });
 
-                              // Merge with ML providers
+                              // Merge with ML providers (cascade: skip ML when regex is confident)
                               if (security.injection?.providers?.length) {
-                                const providerResults = await Promise.all(security.injection.providers.map(async (p) => {
-                                  try { return await Promise.resolve(p.detect(userMessages)); }
-                                  catch { return { riskScore: 0, triggered: [] as string[], action: 'allow' as const }; }
-                                }));
-                                injectionResult = mergeInjectionAnalyses(
-                                  [injectionResult, ...providerResults],
-                                  { blockThreshold: security.injection?.blockThreshold, mergeStrategy: security.injection?.mergeStrategy },
-                                );
+                                const cascade = security.injection.cascade ?? true;
+                                const skipAbove = security.injection.cascadeThresholds?.skipAbove ?? 0.85;
+                                const skipBelow = security.injection.cascadeThresholds?.skipBelow ?? 0.10;
+                                const regexScore = injectionResult.riskScore;
+                                const skipML = cascade && (regexScore >= skipAbove || regexScore <= skipBelow);
+
+                                if (!skipML) {
+                                  const providerResults = await Promise.all(security.injection.providers.map(async (p) => {
+                                    try { return await Promise.resolve(p.detect(userMessages)); }
+                                    catch { return { riskScore: 0, triggered: [] as string[], action: 'allow' as const }; }
+                                  }));
+                                  injectionResult = mergeInjectionAnalyses(
+                                    [injectionResult, ...providerResults],
+                                    { blockThreshold: security.injection?.blockThreshold, mergeStrategy: security.injection?.mergeStrategy },
+                                  );
+                                }
                               }
 
                               // Fire callback + guardrail event
@@ -569,16 +577,24 @@ export class LaunchPromptly {
                                 systemPrompt: systemPromptText || undefined,
                               });
 
-                              // Merge with ML providers
+                              // Merge with ML providers (cascade: skip ML when regex is confident)
                               if (security.jailbreak.providers?.length) {
-                                const providerResults = await Promise.all(security.jailbreak.providers.map(async (p) => {
-                                  try { return await Promise.resolve(p.detect(userMessages)); }
-                                  catch { return { riskScore: 0, triggered: [] as string[], action: 'allow' as const }; }
-                                }));
-                                jailbreakResult = mergeJailbreakAnalyses(
-                                  [jailbreakResult, ...providerResults],
-                                  { blockThreshold: security.jailbreak.blockThreshold, mergeStrategy: security.jailbreak.mergeStrategy },
-                                );
+                                const cascade = security.jailbreak.cascade ?? true;
+                                const skipAbove = security.jailbreak.cascadeThresholds?.skipAbove ?? 0.85;
+                                const skipBelow = security.jailbreak.cascadeThresholds?.skipBelow ?? 0.10;
+                                const regexScore = jailbreakResult.riskScore;
+                                const skipML = cascade && (regexScore >= skipAbove || regexScore <= skipBelow);
+
+                                if (!skipML) {
+                                  const providerResults = await Promise.all(security.jailbreak.providers.map(async (p) => {
+                                    try { return await Promise.resolve(p.detect(userMessages)); }
+                                    catch { return { riskScore: 0, triggered: [] as string[], action: 'allow' as const }; }
+                                  }));
+                                  jailbreakResult = mergeJailbreakAnalyses(
+                                    [jailbreakResult, ...providerResults],
+                                    { blockThreshold: security.jailbreak.blockThreshold, mergeStrategy: security.jailbreak.mergeStrategy },
+                                  );
+                                }
                               }
 
                               if (jailbreakResult.riskScore > 0) {

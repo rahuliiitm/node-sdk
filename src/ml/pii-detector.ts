@@ -4,7 +4,10 @@
  * Catches PII that regex patterns cannot: person names, organization names,
  * and locations.
  *
- * Requires: npm install @huggingface/transformers
+ * Prefers onnxruntime-node for native inference (8-20ms).
+ * Falls back to @huggingface/transformers WASM if onnxruntime-node is not installed.
+ *
+ * Requires: npm install onnxruntime-node @huggingface/transformers
  *
  * @module
  */
@@ -93,20 +96,50 @@ export class MLPIIDetector implements PIIDetectorProvider {
 
   /**
    * Create an MLPIIDetector by loading the NER model.
-   * This is async because model loading requires downloading/caching.
+   *
+   * Tries onnxruntime-node first (native, 8-20ms inference).
+   * Falls back to @huggingface/transformers WASM if ONNX Runtime is not installed.
    */
   static async create(options?: MLPIIDetectorOptions): Promise<MLPIIDetector> {
     const modelName = options?.modelName ?? 'Xenova/bert-base-NER';
     const threshold = options?.threshold ?? 0.5;
 
+    // Try ONNX Runtime first (25-100x faster than WASM)
+    let useOnnx = false;
+    try {
+      await import('onnxruntime-node');
+      useOnnx = true;
+    } catch {
+      // onnxruntime-node not installed
+    }
+
+    if (useOnnx) {
+      const { OnnxSession } = await import('./onnx-runtime');
+      const session = await OnnxSession.create(modelName, { maxLength: 512 });
+      // Wrap OnnxSession.tokenClassify to match NERPipelineFn signature
+      const nerPipeline: NERPipelineFn = async (text: string) => {
+        const entities = await session.tokenClassify(text);
+        return entities.map((e) => ({
+          entity: e.entity_group,
+          entity_group: e.entity_group,
+          score: e.score,
+          word: e.word,
+          start: e.start,
+          end: e.end,
+        }));
+      };
+      return new MLPIIDetector(nerPipeline, modelName, threshold);
+    }
+
+    // Fallback: @huggingface/transformers WASM pipeline
     let pipeline: (task: string, model: string, opts?: Record<string, unknown>) => Promise<NERPipelineFn>;
     try {
       const transformers = await import('@huggingface/transformers');
       pipeline = transformers.pipeline as unknown as typeof pipeline;
     } catch {
       throw new Error(
-        'MLPIIDetector requires @huggingface/transformers. ' +
-        'Install with: npm install @huggingface/transformers',
+        'MLPIIDetector requires onnxruntime-node (recommended) or @huggingface/transformers. ' +
+        'Install with: npm install onnxruntime-node @huggingface/transformers',
       );
     }
 

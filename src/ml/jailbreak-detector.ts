@@ -7,7 +7,10 @@
  * Reuses an injection classification model since jailbreaks are a subclass of
  * prompt injection attacks.
  *
- * Requires: npm install @huggingface/transformers
+ * Prefers onnxruntime-node for native inference (8-20ms).
+ * Falls back to @huggingface/transformers WASM if onnxruntime-node is not installed.
+ *
+ * Requires: npm install onnxruntime-node @huggingface/transformers
  *
  * @module
  */
@@ -62,20 +65,43 @@ export class MLJailbreakDetector implements JailbreakDetectorProvider {
 
   /**
    * Create an MLJailbreakDetector by loading the model.
-   * This is async because model loading requires downloading/caching.
+   *
+   * Tries onnxruntime-node first (native, 8-20ms inference).
+   * Falls back to @huggingface/transformers WASM if ONNX Runtime is not installed.
    */
   static async create(options?: MLJailbreakDetectorOptions): Promise<MLJailbreakDetector> {
     const modelName = options?.modelName ?? 'meta-llama/Prompt-Guard-86M';
     const quantized = options?.quantized ?? true;
 
+    // Try ONNX Runtime first (25-100x faster than WASM)
+    let useOnnx = false;
+    try {
+      await import('onnxruntime-node');
+      useOnnx = true;
+    } catch {
+      // onnxruntime-node not installed
+    }
+
+    if (useOnnx) {
+      const { OnnxSession } = await import('./onnx-runtime');
+      const session = await OnnxSession.create(modelName, {
+        maxLength: 512,
+        quantized,
+      });
+      const classifier: ClassifierFn = async (text: string) =>
+        session.classify(text);
+      return new MLJailbreakDetector(classifier, modelName);
+    }
+
+    // Fallback: @huggingface/transformers WASM pipeline
     let pipeline: (task: string, model: string, opts?: Record<string, unknown>) => Promise<ClassifierFn>;
     try {
       const transformers = await import('@huggingface/transformers');
       pipeline = transformers.pipeline as unknown as typeof pipeline;
     } catch {
       throw new Error(
-        'MLJailbreakDetector requires @huggingface/transformers. ' +
-        'Install with: npm install @huggingface/transformers',
+        'MLJailbreakDetector requires onnxruntime-node (recommended) or @huggingface/transformers. ' +
+        'Install with: npm install onnxruntime-node @huggingface/transformers',
       );
     }
 

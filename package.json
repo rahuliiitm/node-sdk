@@ -51,9 +51,13 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
+    "onnxruntime-node": ">=1.16.0",
     "@huggingface/transformers": ">=3.0.0"
   },
   "peerDependenciesMeta": {
+    "onnxruntime-node": {
+      "optional": true
+    },
     "@huggingface/transformers": {
       "optional": true
     }

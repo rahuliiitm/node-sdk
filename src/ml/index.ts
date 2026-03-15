@@ -1,15 +1,17 @@
 /**
  * LaunchPromptly ML plugin — optional ML-based security detectors.
  *
- * Install via: npm install @huggingface/transformers
+ * Install via: npm install onnxruntime-node @huggingface/transformers
  *
- * This module provides three ML-powered providers that can be used alongside
- * (or in place of) the built-in regex / rule-based detectors:
+ * Uses ONNX Runtime for native inference (8-20ms) when onnxruntime-node is installed.
+ * Falls back to @huggingface/transformers WASM (500ms-2s) otherwise.
  *
- * - {@link MLToxicityDetector} — Transformer-based toxicity / content-safety detection
- * - {@link MLInjectionDetector} — Transformer-based prompt injection detection
- * - {@link MLJailbreakDetector} — Transformer-based jailbreak detection
+ * Detectors:
+ * - {@link MLInjectionDetector} — Prompt injection detection
+ * - {@link MLJailbreakDetector} — Jailbreak detection
+ * - {@link MLToxicityDetector} — Toxicity / content-safety detection
  * - {@link MLPIIDetector} — NER-based PII detection (person names, orgs, locations)
+ * - {@link MLHallucinationDetector} — Hallucination detection (cross-encoder)
  *
  * Each provider satisfies the corresponding provider interface defined in the
  * core SDK so it can be registered as a drop-in replacement.
@@ -48,3 +50,14 @@ export type { MLJailbreakDetectorOptions } from './jailbreak-detector';
 
 export { MLHallucinationDetector } from './hallucination-detector';
 export type { MLHallucinationDetectorOptions } from './hallucination-detector';
+
+export { OnnxSession } from './onnx-runtime';
+export type { OnnxSessionOptions } from './onnx-runtime';
+
+export {
+  ensureModel,
+  getCacheDir,
+  removeModel,
+  listCachedModels,
+} from './model-cache';
+export type { EnsureModelOptions } from './model-cache';

@@ -8,6 +8,7 @@ export type {
   PIISecurityOptions,
   InjectionSecurityOptions,
   JailbreakSecurityOptions,
+  CascadeThresholds,
   UnicodeSanitizerSecurityOptions,
   SecretDetectionSecurityOptions,
   TopicGuardSecurityOptions,

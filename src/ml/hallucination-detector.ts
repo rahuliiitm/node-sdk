@@ -4,7 +4,10 @@
  * Compares generated text against source text to score faithfulness.
  * Uses the vectara/hallucination_evaluation_model (HHEM) by default.
  *
- * Requires: npm install @huggingface/transformers
+ * Prefers onnxruntime-node for native inference (8-20ms).
+ * Falls back to @huggingface/transformers WASM if onnxruntime-node is not installed.
+ *
+ * Requires: npm install onnxruntime-node @huggingface/transformers
  *
  * @module
  */
@@ -50,20 +53,43 @@ export class MLHallucinationDetector implements HallucinationDetectorProvider {
 
   /**
    * Create an MLHallucinationDetector by loading the cross-encoder model.
-   * This is async because model loading requires downloading/caching.
+   *
+   * Tries onnxruntime-node first (native, 8-20ms inference).
+   * Falls back to @huggingface/transformers WASM if ONNX Runtime is not installed.
    */
   static async create(options?: MLHallucinationDetectorOptions): Promise<MLHallucinationDetector> {
     const modelName = options?.modelName ?? 'vectara/hallucination_evaluation_model';
     const threshold = options?.threshold ?? 0.5;
 
+    // Try ONNX Runtime first (25-100x faster than WASM)
+    let useOnnx = false;
+    try {
+      await import('onnxruntime-node');
+      useOnnx = true;
+    } catch {
+      // onnxruntime-node not installed
+    }
+
+    if (useOnnx) {
+      const { OnnxSession } = await import('./onnx-runtime');
+      const session = await OnnxSession.create(modelName, { maxLength: 512 });
+      // Wrap OnnxSession.classifyPair to match ClassifierFn signature
+      const classifier: ClassifierFn = async (inputs: {
+        text: string;
+        text_pair: string;
+      }) => session.classifyPair(inputs.text, inputs.text_pair);
+      return new MLHallucinationDetector(classifier, modelName, threshold);
+    }
+
+    // Fallback: @huggingface/transformers WASM pipeline
     let pipeline: (task: string, model: string, opts?: Record<string, unknown>) => Promise<ClassifierFn>;
     try {
       const transformers = await import('@huggingface/transformers');
       pipeline = transformers.pipeline as unknown as typeof pipeline;
     } catch {
       throw new Error(
-        'MLHallucinationDetector requires @huggingface/transformers. ' +
-        'Install with: npm install @huggingface/transformers',
+        'MLHallucinationDetector requires onnxruntime-node (recommended) or @huggingface/transformers. ' +
+        'Install with: npm install onnxruntime-node @huggingface/transformers',
       );
     }
 

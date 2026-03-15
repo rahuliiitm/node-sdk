@@ -337,14 +337,22 @@ export function wrapAnthropicClient<T extends object>(
                         systemPrompt: anthropicSystemPrompt || undefined,
                       });
                       if (security.injection?.providers?.length) {
-                        const providerResults = await Promise.all(security.injection.providers.map(async (p) => {
-                          try { return await Promise.resolve(p.detect(userText)); }
-                          catch { return { riskScore: 0, triggered: [] as string[], action: 'allow' as const }; }
-                        }));
-                        injectionResult = mergeInjectionAnalyses(
-                          [injectionResult, ...providerResults],
-                          { blockThreshold: security.injection?.blockThreshold, mergeStrategy: security.injection?.mergeStrategy },
-                        );
+                        const cascade = security.injection.cascade ?? true;
+                        const skipAbove = security.injection.cascadeThresholds?.skipAbove ?? 0.85;
+                        const skipBelow = security.injection.cascadeThresholds?.skipBelow ?? 0.10;
+                        const regexScore = injectionResult.riskScore;
+                        const skipML = cascade && (regexScore >= skipAbove || regexScore <= skipBelow);
+
+                        if (!skipML) {
+                          const providerResults = await Promise.all(security.injection.providers.map(async (p) => {
+                            try { return await Promise.resolve(p.detect(userText)); }
+                            catch { return { riskScore: 0, triggered: [] as string[], action: 'allow' as const }; }
+                          }));
+                          injectionResult = mergeInjectionAnalyses(
+                            [injectionResult, ...providerResults],
+                            { blockThreshold: security.injection?.blockThreshold, mergeStrategy: security.injection?.mergeStrategy },
+                          );
+                        }
                       }
                       security.injection?.onDetect?.(injectionResult);
                       if (injectionResult.riskScore > 0) {
