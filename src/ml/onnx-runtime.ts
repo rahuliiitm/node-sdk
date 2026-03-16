@@ -31,6 +31,8 @@ export interface OnnxSessionOptions {
   maxLength?: number;
   /** Use quantized (INT8) model. Default: true */
   quantized?: boolean;
+  /** Custom cache directory for baked models. Default: ~/.launchpromptly/models */
+  cacheDir?: string;
 }
 
 /**
@@ -78,7 +80,7 @@ export class OnnxSession {
 
     // Download model files
     const { ensureModel } = await import('./model-cache');
-    const modelDir = await ensureModel(modelId, { quantized });
+    const modelDir = await ensureModel(modelId, { quantized, cacheDir: options?.cacheDir });
 
     // Load ONNX Runtime
     let ort: any;
@@ -103,10 +105,10 @@ export class OnnxSession {
       if (/protobuf|onnx|parse|corrupt|truncat/i.test(msg)) {
         // Delete corrupted model and re-download
         const { removeModel } = await import('./model-cache');
-        removeModel(modelId);
+        removeModel(modelId, options?.cacheDir);
         sessionCache.delete(cacheKey);
 
-        const freshDir = await ensureModel(modelId, { quantized });
+        const freshDir = await ensureModel(modelId, { quantized, cacheDir: options?.cacheDir });
         const freshPath = path.join(freshDir, 'model.onnx');
         session = await ort.InferenceSession.create(freshPath, {
           executionProviders: ['cpu'],

@@ -34,6 +34,8 @@ export interface MLJailbreakDetectorOptions {
   modelName?: string;
   /** Use quantized (q8) model for smaller size and faster inference. Default: true */
   quantized?: boolean;
+  /** Custom cache directory for baked models. Default: ~/.launchpromptly/models */
+  cacheDir?: string;
 }
 
 type ClassifierFn = (text: string) => Promise<Array<{ label: string; score: number }>>;
@@ -87,6 +89,7 @@ export class MLJailbreakDetector implements JailbreakDetectorProvider {
       const session = await OnnxSession.create(modelName, {
         maxLength: 512,
         quantized,
+        cacheDir: options?.cacheDir,
       });
       const classifier: ClassifierFn = async (text: string) =>
         session.classify(text);

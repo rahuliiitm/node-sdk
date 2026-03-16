@@ -35,6 +35,8 @@ export interface MLToxicityDetectorOptions {
   modelName?: string;
   /** Minimum confidence to report a detection. Default: 0.5 */
   threshold?: number;
+  /** Custom cache directory for baked models. Default: ~/.launchpromptly/models */
+  cacheDir?: string;
 }
 
 type ClassifierFn = (text: string, options?: Record<string, unknown>) => Promise<Array<{ label: string; score: number }> | Array<Array<{ label: string; score: number }>>>;
@@ -90,7 +92,7 @@ export class MLToxicityDetector implements ContentFilterProvider {
 
     if (useOnnx) {
       const { OnnxSession } = await import('./onnx-runtime');
-      const session = await OnnxSession.create(modelName, { maxLength: 512 });
+      const session = await OnnxSession.create(modelName, { maxLength: 512, cacheDir: options?.cacheDir });
       // Wrap OnnxSession.classify to match ClassifierFn signature (returns all labels)
       const classifier: ClassifierFn = async (
         text: string,

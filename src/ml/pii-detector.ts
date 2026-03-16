@@ -59,6 +59,8 @@ export interface MLPIIDetectorOptions {
   modelName?: string;
   /** Minimum confidence to report a detection. Default: 0.5 */
   threshold?: number;
+  /** Custom cache directory for baked models. Default: ~/.launchpromptly/models */
+  cacheDir?: string;
 }
 
 type NERPipelineFn = (text: string) => Promise<NERResult[]>;
@@ -115,7 +117,7 @@ export class MLPIIDetector implements PIIDetectorProvider {
 
     if (useOnnx) {
       const { OnnxSession } = await import('./onnx-runtime');
-      const session = await OnnxSession.create(modelName, { maxLength: 512 });
+      const session = await OnnxSession.create(modelName, { maxLength: 512, cacheDir: options?.cacheDir });
       // Wrap OnnxSession.tokenClassify to match NERPipelineFn signature
       const nerPipeline: NERPipelineFn = async (text: string) => {
         const entities = await session.tokenClassify(text);

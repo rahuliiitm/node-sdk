@@ -19,6 +19,8 @@ export interface MLHallucinationDetectorOptions {
   modelName?: string;
   /** Faithfulness threshold (0-1). Below this = hallucination. Default: 0.5 */
   threshold?: number;
+  /** Custom cache directory for baked models. Default: ~/.launchpromptly/models */
+  cacheDir?: string;
 }
 
 type ClassifierFn = (
@@ -72,7 +74,7 @@ export class MLHallucinationDetector implements HallucinationDetectorProvider {
 
     if (useOnnx) {
       const { OnnxSession } = await import('./onnx-runtime');
-      const session = await OnnxSession.create(modelName, { maxLength: 512 });
+      const session = await OnnxSession.create(modelName, { maxLength: 512, cacheDir: options?.cacheDir });
       // Wrap OnnxSession.classifyPair to match ClassifierFn signature
       const classifier: ClassifierFn = async (inputs: {
         text: string;

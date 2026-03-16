@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { validateOnnxFile, ensureModel, removeModel, listCachedModels } from './model-cache';
+import { validateOnnxFile, ensureModel, removeModel, listCachedModels, getRegisteredModels, MODEL_NAME_MAP } from './model-cache';
 
 // ── validateOnnxFile ─────────────────────────────────────────────────────────
 
@@ -116,5 +116,57 @@ describe('listCachedModels', () => {
 
   it('should return empty for non-existent cache dir', () => {
     expect(listCachedModels(path.join(tmpDir, 'nope'))).toEqual([]);
+  });
+});
+
+// ── getRegisteredModels ─────────────────────────────────────────────────────
+
+describe('getRegisteredModels', () => {
+  it('should include Xenova/toxic-bert', () => {
+    expect(getRegisteredModels()).toContain('Xenova/toxic-bert');
+  });
+
+  it('should include protectai/deberta-v3-base-prompt-injection-v2', () => {
+    expect(getRegisteredModels()).toContain('protectai/deberta-v3-base-prompt-injection-v2');
+  });
+
+  it('should include protectai/deberta-v3-small-prompt-injection-v2', () => {
+    expect(getRegisteredModels()).toContain('protectai/deberta-v3-small-prompt-injection-v2');
+  });
+
+  it('should NOT include meta-llama/Prompt-Guard-86M (no ONNX weights)', () => {
+    expect(getRegisteredModels()).not.toContain('meta-llama/Prompt-Guard-86M');
+  });
+
+  it('should NOT include vectara/hallucination_evaluation_model (no ONNX weights)', () => {
+    expect(getRegisteredModels()).not.toContain('vectara/hallucination_evaluation_model');
+  });
+});
+
+// ── MODEL_NAME_MAP ──────────────────────────────────────────────────────────
+
+describe('MODEL_NAME_MAP', () => {
+  it('should map toxicity to Xenova/toxic-bert', () => {
+    expect(MODEL_NAME_MAP['toxicity']).toBe('Xenova/toxic-bert');
+  });
+
+  it('should map injection to protectai model', () => {
+    expect(MODEL_NAME_MAP['injection']).toBe('protectai/deberta-v3-base-prompt-injection-v2');
+  });
+
+  it('should map injection-small to protectai small model', () => {
+    expect(MODEL_NAME_MAP['injection-small']).toBe('protectai/deberta-v3-small-prompt-injection-v2');
+  });
+
+  it('should map ner to Xenova/bert-base-NER', () => {
+    expect(MODEL_NAME_MAP['ner']).toBe('Xenova/bert-base-NER');
+  });
+});
+
+// ── ensureModel with cacheDir ───────────────────────────────────────────────
+
+describe('ensureModel with cacheDir', () => {
+  it('should throw for unknown model even with cacheDir', async () => {
+    await expect(ensureModel('unknown/model', { cacheDir: '/tmp/test' })).rejects.toThrow(/Unknown model/);
   });
 });

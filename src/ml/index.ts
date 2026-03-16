@@ -59,5 +59,7 @@ export {
   getCacheDir,
   removeModel,
   listCachedModels,
+  getRegisteredModels,
+  MODEL_NAME_MAP,
 } from './model-cache';
 export type { EnsureModelOptions } from './model-cache';

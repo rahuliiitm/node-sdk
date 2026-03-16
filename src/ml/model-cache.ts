@@ -55,16 +55,6 @@ interface ModelEntry {
  * (the layout used by @huggingface/transformers and onnx-community).
  */
 const MODEL_REGISTRY: Record<string, ModelEntry> = {
-  'meta-llama/Prompt-Guard-86M': {
-    onnxFile: 'onnx/model.onnx',
-    quantizedFile: 'onnx/model_quantized.onnx',
-    files: [
-      'tokenizer.json',
-      'tokenizer_config.json',
-      'config.json',
-      'special_tokens_map.json',
-    ],
-  },
   'Xenova/bert-base-NER': {
     onnxFile: 'onnx/model.onnx',
     quantizedFile: 'onnx/model_quantized.onnx',
@@ -83,25 +73,38 @@ const MODEL_REGISTRY: Record<string, ModelEntry> = {
       'config.json',
     ],
   },
-  'vectara/hallucination_evaluation_model': {
-    onnxFile: 'onnx/model.onnx',
-    quantizedFile: 'onnx/model_quantized.onnx',
-    files: [
-      'tokenizer.json',
-      'tokenizer_config.json',
-      'config.json',
-    ],
-  },
   'protectai/deberta-v3-base-prompt-injection-v2': {
     onnxFile: 'onnx/model.onnx',
     files: [
-      'tokenizer.json',
+      'onnx/tokenizer.json',
+      'tokenizer_config.json',
+      'config.json',
+      'special_tokens_map.json',
+    ],
+  },
+  'protectai/deberta-v3-small-prompt-injection-v2': {
+    onnxFile: 'onnx/model.onnx',
+    files: [
+      'onnx/tokenizer.json',
       'tokenizer_config.json',
       'config.json',
       'special_tokens_map.json',
     ],
   },
 };
+
+/** Friendly name → model ID mapping for the CLI. */
+export const MODEL_NAME_MAP: Record<string, string> = {
+  toxicity: 'Xenova/toxic-bert',
+  injection: 'protectai/deberta-v3-base-prompt-injection-v2',
+  'injection-small': 'protectai/deberta-v3-small-prompt-injection-v2',
+  ner: 'Xenova/bert-base-NER',
+};
+
+/** Get list of all registered model IDs. */
+export function getRegisteredModels(): string[] {
+  return Object.keys(MODEL_REGISTRY);
+}
 
 export interface EnsureModelOptions {
   /** Use quantized model for faster inference and smaller size. Default: true */
