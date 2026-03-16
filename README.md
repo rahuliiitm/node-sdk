@@ -361,11 +361,11 @@ npm install @huggingface/transformers
 import { LaunchPromptly } from 'launchpromptly';
 import { MLToxicityDetector, MLInjectionDetector, MLPIIDetector } from 'launchpromptly/ml';
 
-// Load models (async — first run downloads from HuggingFace)
+// Load models (first run downloads from HuggingFace, cached after)
 const [toxicity, injection, pii] = await Promise.all([
-  MLToxicityDetector.create(),     // Xenova/toxic-bert (~170MB)
-  MLInjectionDetector.create(),    // protectai/deberta-v3 (~350MB)
-  MLPIIDetector.create(),          // Xenova/bert-base-NER (~170MB)
+  MLToxicityDetector.create(),     // Xenova/toxic-bert (~106MB quantized)
+  MLInjectionDetector.create(),    // protectai/deberta-v3 (~704MB)
+  MLPIIDetector.create(),          // Xenova/bert-base-NER (~170MB quantized)
 ]);
 
 const lp = new LaunchPromptly({
@@ -406,6 +406,23 @@ All ML inference runs locally — no data leaves your infrastructure.
 | `MLToxicityDetector` | `Xenova/toxic-bert` | Hate speech, threats, obscenity, identity attacks |
 | `MLInjectionDetector` | `protectai/deberta-v3-base-prompt-injection-v2` | Semantic prompt injection (catches obfuscated/encoded attacks) |
 | `MLPIIDetector` | `Xenova/bert-base-NER` | Person names, organization names, locations (NER) |
+
+### Pre-downloading models
+
+For Docker or air-gapped deployments, pre-download models at build time:
+
+```bash
+npx launchpromptly download-models --cache-dir /app/.models
+```
+
+Then point your detectors at the cache:
+
+```typescript
+MLInjectionDetector.create({ cacheDir: '/app/.models' })
+MLToxicityDetector.create({ cacheDir: '/app/.models' })
+```
+
+Available flags: `--models toxicity,injection` (comma-separated) and `--cache-dir <path>`.
 
 ## Privacy & data practices
 

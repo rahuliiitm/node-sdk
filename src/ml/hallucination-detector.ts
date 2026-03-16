@@ -2,7 +2,7 @@
  * ML-based hallucination detector using a cross-encoder model.
  *
  * Compares generated text against source text to score faithfulness.
- * Uses the vectara/hallucination_evaluation_model (HHEM) by default.
+ * Requires a cross-encoder model (e.g. vectara/HHEM) with ONNX weights.
  *
  * Prefers onnxruntime-node for native inference (8-20ms).
  * Falls back to @huggingface/transformers WASM if onnxruntime-node is not installed.
@@ -15,7 +15,7 @@
 import type { HallucinationDetectorProvider, HallucinationResult } from '../internal/hallucination';
 
 export interface MLHallucinationDetectorOptions {
-  /** HuggingFace model name/path. Default: 'vectara/hallucination_evaluation_model' */
+  /** HuggingFace model name/path. Must have ONNX weights. */
   modelName?: string;
   /** Faithfulness threshold (0-1). Below this = hallucination. Default: 0.5 */
   threshold?: number;
@@ -30,8 +30,8 @@ type ClassifierFn = (
 /**
  * ML-based hallucination detector using a cross-encoder model.
  *
- * Uses the `vectara/hallucination_evaluation_model` by default —
- * a 137M parameter cross-encoder trained to score text faithfulness.
+ * Requires a cross-encoder model with ONNX weights.
+ * Defaults to `vectara/hallucination_evaluation_model` (137M params).
  *
  * @example
  * ```ts
