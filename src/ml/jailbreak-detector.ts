@@ -30,7 +30,7 @@ const INJECTION_LABELS = new Set(['INJECTION', 'LABEL_1', 'INJECTED', 'UNSAFE'])
 const SAFE_LABELS = new Set(['SAFE', 'LABEL_0', 'BENIGN']);
 
 export interface MLJailbreakDetectorOptions {
-  /** HuggingFace model name/path. Default: 'meta-llama/Prompt-Guard-86M' */
+  /** HuggingFace model name/path. Default: 'protectai/deberta-v3-base-prompt-injection-v2' */
   modelName?: string;
   /** Use quantized (q8) model for smaller size and faster inference. Default: true */
   quantized?: boolean;
@@ -70,8 +70,8 @@ export class MLJailbreakDetector implements JailbreakDetectorProvider {
    * Falls back to @huggingface/transformers WASM if ONNX Runtime is not installed.
    */
   static async create(options?: MLJailbreakDetectorOptions): Promise<MLJailbreakDetector> {
-    const modelName = options?.modelName ?? 'meta-llama/Prompt-Guard-86M';
-    const quantized = options?.quantized ?? true;
+    const modelName = options?.modelName ?? 'protectai/deberta-v3-base-prompt-injection-v2';
+    const quantized = options?.quantized ?? false;
 
     // Try ONNX Runtime first (25-100x faster than WASM)
     let useOnnx = false;
@@ -128,7 +128,7 @@ export class MLJailbreakDetector implements JailbreakDetectorProvider {
   ): MLJailbreakDetector {
     return new MLJailbreakDetector(
       classifier,
-      options?.modelName ?? 'meta-llama/Prompt-Guard-86M',
+      options?.modelName ?? 'protectai/deberta-v3-base-prompt-injection-v2',
     );
   }
 

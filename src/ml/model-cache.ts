@@ -92,6 +92,15 @@ const MODEL_REGISTRY: Record<string, ModelEntry> = {
       'config.json',
     ],
   },
+  'protectai/deberta-v3-base-prompt-injection-v2': {
+    onnxFile: 'onnx/model.onnx',
+    files: [
+      'tokenizer.json',
+      'tokenizer_config.json',
+      'config.json',
+      'special_tokens_map.json',
+    ],
+  },
 };
 
 export interface EnsureModelOptions {

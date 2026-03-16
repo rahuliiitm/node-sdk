@@ -28,7 +28,7 @@ const INJECTION_LABELS = new Set(['INJECTION', 'LABEL_1', 'INJECTED', 'UNSAFE'])
 const SAFE_LABELS = new Set(['SAFE', 'LABEL_0', 'BENIGN']);
 
 export interface MLInjectionDetectorOptions {
-  /** HuggingFace model name/path. Default: 'meta-llama/Prompt-Guard-86M' */
+  /** HuggingFace model name/path. Default: 'protectai/deberta-v3-base-prompt-injection-v2' */
   modelName?: string;
   /** Use quantized (q8) model for smaller size and faster inference. Default: true */
   quantized?: boolean;
@@ -39,7 +39,7 @@ type ClassifierFn = (text: string) => Promise<Array<{ label: string; score: numb
 /**
  * ML-based injection detector using a small transformer classifier.
  *
- * Uses the `meta-llama/Prompt-Guard-86M` model by default —
+ * Uses the `protectai/deberta-v3-base-prompt-injection-v2` model by default —
  * a compact (~50MB quantized) and accurate prompt injection classifier.
  *
  * @example
@@ -67,8 +67,8 @@ export class MLInjectionDetector implements InjectionDetectorProvider {
    * Falls back to @huggingface/transformers WASM if ONNX Runtime is not installed.
    */
   static async create(options?: MLInjectionDetectorOptions): Promise<MLInjectionDetector> {
-    const modelName = options?.modelName ?? 'meta-llama/Prompt-Guard-86M';
-    const quantized = options?.quantized ?? true;
+    const modelName = options?.modelName ?? 'protectai/deberta-v3-base-prompt-injection-v2';
+    const quantized = options?.quantized ?? false;
 
     // Try ONNX Runtime first (25-100x faster than WASM)
     let useOnnx = false;
@@ -125,7 +125,7 @@ export class MLInjectionDetector implements InjectionDetectorProvider {
   ): MLInjectionDetector {
     return new MLInjectionDetector(
       classifier,
-      options?.modelName ?? 'meta-llama/Prompt-Guard-86M',
+      options?.modelName ?? 'protectai/deberta-v3-base-prompt-injection-v2',
     );
   }
 
