@@ -90,45 +90,58 @@ export async function createMLProviders(
   }
 
   const result: ResolvedMLProviders = {};
-  const tasks: Promise<void>[] = [];
+  const tasks: Array<{ name: string; task: Promise<void> }> = [];
 
   if (guardrails.has('injection')) {
-    tasks.push(
-      import('../ml/injection-detector').then(async ({ MLInjectionDetector }) => {
+    tasks.push({
+      name: 'injection',
+      task: import('../ml/injection-detector').then(async ({ MLInjectionDetector }) => {
         result.injection = await MLInjectionDetector.create();
       }),
-    );
+    });
   }
   if (guardrails.has('jailbreak')) {
-    tasks.push(
-      import('../ml/jailbreak-detector').then(async ({ MLJailbreakDetector }) => {
+    tasks.push({
+      name: 'jailbreak',
+      task: import('../ml/jailbreak-detector').then(async ({ MLJailbreakDetector }) => {
         result.jailbreak = await MLJailbreakDetector.create();
       }),
-    );
+    });
   }
   if (guardrails.has('pii')) {
-    tasks.push(
-      import('../ml/pii-detector').then(async ({ MLPIIDetector }) => {
+    tasks.push({
+      name: 'pii',
+      task: import('../ml/pii-detector').then(async ({ MLPIIDetector }) => {
         result.pii = await MLPIIDetector.create();
       }),
-    );
+    });
   }
   if (guardrails.has('toxicity')) {
-    tasks.push(
-      import('../ml/toxicity-detector').then(async ({ MLToxicityDetector }) => {
+    tasks.push({
+      name: 'toxicity',
+      task: import('../ml/toxicity-detector').then(async ({ MLToxicityDetector }) => {
         result.toxicity = await MLToxicityDetector.create();
       }),
-    );
+    });
   }
   if (guardrails.has('hallucination')) {
-    tasks.push(
-      import('../ml/hallucination-detector').then(async ({ MLHallucinationDetector }) => {
+    tasks.push({
+      name: 'hallucination',
+      task: import('../ml/hallucination-detector').then(async ({ MLHallucinationDetector }) => {
         result.hallucination = await MLHallucinationDetector.create();
       }),
-    );
+    });
   }
 
-  await Promise.all(tasks);
+  // Load independently — one model failure doesn't block the others
+  const outcomes = await Promise.allSettled(tasks.map((t) => t.task));
+  for (let i = 0; i < outcomes.length; i++) {
+    if (outcomes[i].status === 'rejected') {
+      const reason = (outcomes[i] as PromiseRejectedResult).reason;
+      console.warn(`[ml-resolver] ${tasks[i].name} model failed to load:`, (reason as Error)?.message ?? reason);
+    }
+  }
+
   return result;
 }
 

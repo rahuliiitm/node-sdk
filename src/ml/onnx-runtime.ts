@@ -92,9 +92,29 @@ export class OnnxSession {
     }
 
     const modelPath = path.join(modelDir, 'model.onnx');
-    const session = await ort.InferenceSession.create(modelPath, {
-      executionProviders: ['cpu'],
-    });
+    let session: any;
+    try {
+      session = await ort.InferenceSession.create(modelPath, {
+        executionProviders: ['cpu'],
+      });
+    } catch (err) {
+      // Detect corrupted ONNX files (protobuf parse errors, truncated files)
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/protobuf|onnx|parse|corrupt|truncat/i.test(msg)) {
+        // Delete corrupted model and re-download
+        const { removeModel } = await import('./model-cache');
+        removeModel(modelId);
+        sessionCache.delete(cacheKey);
+
+        const freshDir = await ensureModel(modelId, { quantized });
+        const freshPath = path.join(freshDir, 'model.onnx');
+        session = await ort.InferenceSession.create(freshPath, {
+          executionProviders: ['cpu'],
+        });
+      } else {
+        throw err;
+      }
+    }
 
     // Load tokenizer via @huggingface/transformers
     let AutoTokenizer: any;

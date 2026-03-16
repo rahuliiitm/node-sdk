@@ -1,4 +1,4 @@
-import { resolveGuardrailList, mergeMLProviders } from './ml-resolver';
+import { resolveGuardrailList, mergeMLProviders, createMLProviders } from './ml-resolver';
 import type { ResolvedMLProviders } from './ml-resolver';
 import type { SecurityOptions } from '../types';
 
@@ -164,5 +164,19 @@ describe('mergeMLProviders', () => {
     expect(result.injection?.enabled).toBe(true);
     expect(result.injection?.blockThreshold).toBe(0.8);
     expect(result.injection?.providers).toEqual([mockInjectionProvider]);
+  });
+});
+
+// ── createMLProviders (partial failure resilience) ────────────────────────────
+
+describe('createMLProviders', () => {
+  it('should return empty object when useML is false', async () => {
+    const result = await createMLProviders(false);
+    expect(result).toEqual({});
+  });
+
+  it('should return empty object for empty array', async () => {
+    const result = await createMLProviders([]);
+    expect(result).toEqual({});
   });
 });

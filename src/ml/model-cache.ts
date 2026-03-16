@@ -13,6 +13,30 @@ import * as os from 'os';
 
 const DEFAULT_CACHE_DIR = path.join(os.homedir(), '.launchpromptly', 'models');
 
+const MIN_ONNX_FILE_SIZE = 1024; // 1KB — any valid model is much larger
+const MAX_DOWNLOAD_RETRIES = 3;
+const BASE_RETRY_DELAY_MS = 1000;
+
+/**
+ * Check that a cached ONNX file looks valid.
+ * Verifies minimum file size and ONNX protobuf magic byte (0x08 = ir_version field).
+ */
+export function validateOnnxFile(filePath: string): boolean {
+  try {
+    const stats = fs.statSync(filePath);
+    if (stats.size < MIN_ONNX_FILE_SIZE) return false;
+
+    const fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(4);
+    fs.readSync(fd, buf, 0, 4, 0);
+    fs.closeSync(fd);
+
+    return buf[0] === 0x08;
+  } catch {
+    return false;
+  }
+}
+
 interface ModelEntry {
   /** HuggingFace repo to download from. Defaults to the model ID. */
   repo?: string;
@@ -102,12 +126,18 @@ export async function ensureModel(
     quantized && entry.quantizedFile ? entry.quantizedFile : entry.onnxFile;
   const localOnnxPath = path.join(modelDir, 'model.onnx');
 
-  // Fast path: already cached
+  // Fast path: already cached and valid
   if (
     fs.existsSync(localOnnxPath) &&
-    fs.existsSync(path.join(modelDir, 'config.json'))
+    fs.existsSync(path.join(modelDir, 'config.json')) &&
+    validateOnnxFile(localOnnxPath)
   ) {
     return modelDir;
+  }
+
+  // Remove corrupted ONNX file so it gets re-downloaded
+  if (fs.existsSync(localOnnxPath) && !validateOnnxFile(localOnnxPath)) {
+    fs.unlinkSync(localOnnxPath);
   }
 
   fs.mkdirSync(modelDir, { recursive: true });
@@ -117,6 +147,14 @@ export async function ensureModel(
   // Download ONNX model file (always saved as model.onnx locally)
   if (!fs.existsSync(localOnnxPath)) {
     await downloadHFFile(repo, onnxRemotePath, localOnnxPath);
+  }
+
+  // Validate downloaded file
+  if (!validateOnnxFile(localOnnxPath)) {
+    fs.unlinkSync(localOnnxPath);
+    throw new Error(
+      `Downloaded ONNX file for ${modelId} failed integrity check. The file may be corrupted or incomplete.`,
+    );
   }
 
   // Download supporting files (tokenizer, config, etc.)
@@ -132,7 +170,8 @@ export async function ensureModel(
 
 /**
  * Download a single file from HuggingFace Hub.
- * Supports HF_TOKEN for gated/private models.
+ * Retries up to 3 times with exponential backoff on server/network errors.
+ * Uses atomic write (temp file + rename) to prevent partial downloads.
  */
 async function downloadHFFile(
   repo: string,
@@ -147,23 +186,48 @@ async function downloadHFFile(
     headers['Authorization'] = `Bearer ${hfToken}`;
   }
 
-  const response = await fetch(url, { headers, redirect: 'follow' });
+  for (let attempt = 0; attempt < MAX_DOWNLOAD_RETRIES; attempt++) {
+    try {
+      const response = await fetch(url, { headers, redirect: 'follow' });
 
-  if (!response.ok) {
-    const hint =
-      response.status === 401
-        ? ' This model may require authentication. Set the HF_TOKEN environment variable.'
-        : response.status === 404
-          ? ` File not found at ${url}. The ONNX weights may not be published for this model.`
-          : '';
-    throw new Error(
-      `Failed to download ${filePath} from ${repo}: ${response.status} ${response.statusText}.${hint}`,
-    );
+      if (!response.ok) {
+        // Client errors (401, 404) won't change on retry
+        if (response.status < 500) {
+          const hint =
+            response.status === 401
+              ? ' This model may require authentication. Set the HF_TOKEN environment variable.'
+              : response.status === 404
+                ? ` File not found at ${url}. The ONNX weights may not be published for this model.`
+                : '';
+          throw new Error(
+            `Failed to download ${filePath} from ${repo}: ${response.status} ${response.statusText}.${hint}`,
+          );
+        }
+        // Server error — retryable
+        throw new Error(`Server error ${response.status} downloading ${filePath} from ${repo}`);
+      }
+
+      const buffer = await response.arrayBuffer();
+      fs.mkdirSync(path.dirname(localPath), { recursive: true });
+
+      // Atomic write: temp file then rename
+      const tmpPath = localPath + '.tmp';
+      fs.writeFileSync(tmpPath, Buffer.from(buffer));
+      fs.renameSync(tmpPath, localPath);
+      return;
+    } catch (err) {
+      // Don't retry client errors
+      if (err instanceof Error && /\b(401|404)\b/.test(err.message)) {
+        throw err;
+      }
+      if (attempt < MAX_DOWNLOAD_RETRIES - 1) {
+        const delay = BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
   }
-
-  const buffer = await response.arrayBuffer();
-  fs.mkdirSync(path.dirname(localPath), { recursive: true });
-  fs.writeFileSync(localPath, Buffer.from(buffer));
 }
 
 /** Get the default cache directory. */
