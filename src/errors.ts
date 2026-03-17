@@ -9,6 +9,9 @@ import type { ContentViolation } from './internal/content-filter';
 import type { ModelPolicyViolation } from './internal/model-policy';
 import type { TopicViolation } from './internal/topic-guard';
 import type { StreamViolation } from './types';
+import type { ToolGuardViolation } from './internal/tool-guard';
+import type { ChainOfThoughtViolation } from './internal/cot-guard';
+import type { ConversationGuardViolation } from './internal/conversation-guard';
 import type { SchemaValidationError as SchemaError } from './internal/schema-validator';
 
 export class PromptInjectionError extends Error {
@@ -104,5 +107,37 @@ export class StreamAbortError extends Error {
     this.violation = violation;
     this.partialResponse = partialResponse;
     this.approximateTokens = Math.ceil(partialResponse.length / 4);
+  }
+}
+
+export class ToolGuardError extends Error {
+  readonly violations: ToolGuardViolation[];
+
+  constructor(violations: ToolGuardViolation[]) {
+    const summary = violations.map((v) => `${v.type}: ${v.toolName}`).join(', ');
+    super(`Tool guard violation: ${summary}`);
+    this.name = 'ToolGuardError';
+    this.violations = violations;
+  }
+}
+
+export class ChainOfThoughtError extends Error {
+  readonly violations: ChainOfThoughtViolation[];
+
+  constructor(violations: ChainOfThoughtViolation[]) {
+    const summary = violations.map((v) => v.type).join(', ');
+    super(`Chain-of-thought violation: ${summary}`);
+    this.name = 'ChainOfThoughtError';
+    this.violations = violations;
+  }
+}
+
+export class ConversationGuardError extends Error {
+  readonly violation: ConversationGuardViolation;
+
+  constructor(violation: ConversationGuardViolation) {
+    super(`Conversation guard: ${violation.type} at turn ${violation.currentTurn} — ${violation.details}`);
+    this.name = 'ConversationGuardError';
+    this.violation = violation;
   }
 }

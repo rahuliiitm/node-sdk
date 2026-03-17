@@ -32,6 +32,9 @@ export {
   StreamAbortError,
   JailbreakError,
   TopicViolationError,
+  ToolGuardError,
+  ChainOfThoughtError,
+  ConversationGuardError,
 } from './errors';
 
 // Security modules — public API
@@ -113,6 +116,33 @@ export type {
   OutputSafetyCategory,
   OutputSafetyThreat,
 } from './internal/output-safety';
+
+// Tool guard
+export { checkToolCalls, detectDangerousArgs, scanToolResult } from './internal/tool-guard';
+export type {
+  ToolGuardOptions,
+  ToolGuardViolation,
+  ToolGuardCheckResult,
+  ToolCallInfo,
+  ToolResultScanReport,
+  ToolResultThreat,
+} from './internal/tool-guard';
+
+// Chain-of-thought guard
+export { scanChainOfThought, extractReasoningText } from './internal/cot-guard';
+export type {
+  ChainOfThoughtGuardOptions,
+  ChainOfThoughtViolation,
+  ChainOfThoughtScanResult,
+} from './internal/cot-guard';
+
+// Conversation guard
+export { ConversationGuard } from './internal/conversation-guard';
+export type {
+  ConversationGuardOptions,
+  ConversationGuardViolation,
+  ConversationSummary,
+} from './internal/conversation-guard';
 
 // Topic templates (pre-built topic definitions)
 export {

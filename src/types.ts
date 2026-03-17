@@ -55,6 +55,8 @@ export interface SecurityOptions {
   outputSafety?: OutputSafetySecurityOptions;
   promptLeakage?: PromptLeakageSecurityOptions;
   hallucination?: import('./internal/hallucination').HallucinationOptions;
+  toolGuard?: import('./internal/tool-guard').ToolGuardOptions;
+  chainOfThought?: import('./internal/cot-guard').ChainOfThoughtGuardOptions;
   audit?: {
     logLevel?: 'none' | 'summary' | 'detailed';
   };
@@ -221,7 +223,17 @@ export type GuardrailEventType =
   | 'output.unsafe'
   | 'prompt.leaked'
   | 'hallucination.detected'
-  | 'hallucination.blocked';
+  | 'hallucination.blocked'
+  | 'tool.blocked'
+  | 'tool.violation'
+  | 'cot.injection'
+  | 'cot.system_leak'
+  | 'cot.goal_drift'
+  | 'conversation.max_turns'
+  | 'conversation.topic_drift'
+  | 'conversation.risk_threshold'
+  | 'conversation.agent_loop'
+  | 'conversation.pii_spread';
 
 /** Payload emitted when a guardrail event fires. */
 export interface GuardrailEvent {

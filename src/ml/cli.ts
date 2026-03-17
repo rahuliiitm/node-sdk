@@ -47,7 +47,18 @@ function formatBytes(bytes: number): string {
 async function main() {
   const args = process.argv.slice(2);
 
-  if (args.includes('--help') || args.includes('-h')) {
+  if (args.length === 0 || (args.includes('--help') && !args[0]?.match(/^(download-models|eval)$/))) {
+    console.log(`Usage: launchpromptly <command> [options]
+
+Commands:
+  download-models    Download ML models for enhanced detection
+  eval               Run guardrail test suites
+
+Run "launchpromptly <command> --help" for command-specific help.`);
+    process.exit(0);
+  }
+
+  if (args[0] === 'download-models' && args.includes('--help')) {
     console.log(`Usage: launchpromptly download-models [options]
 
 Options:
@@ -64,8 +75,16 @@ Examples:
   }
 
   const command = args[0];
+
+  // Dispatch to eval command
+  if (command === 'eval') {
+    const { evalMain } = await import('../eval/cli');
+    const code = await evalMain(args.slice(1));
+    process.exit(code);
+  }
+
   if (command && command !== 'download-models') {
-    console.error(`Unknown command: ${command}. Use "download-models".`);
+    console.error(`Unknown command: ${command}. Use "download-models" or "eval".`);
     process.exit(1);
   }
 

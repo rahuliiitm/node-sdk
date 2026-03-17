@@ -17,8 +17,10 @@ import { detectJailbreak, mergeJailbreakAnalyses, type JailbreakAnalysis } from 
 import { checkTopicGuard, type TopicViolation } from './internal/topic-guard';
 import { scanOutputSafety, type OutputSafetyThreat } from './internal/output-safety';
 import { detectPromptLeakage, type PromptLeakageResult } from './internal/prompt-leakage';
+import { checkToolCalls, scanToolResult, type ToolGuardViolation, type ToolCallInfo } from './internal/tool-guard';
+import { scanChainOfThought, extractReasoningText, type ChainOfThoughtViolation } from './internal/cot-guard';
 import { resolveSecurityOptions } from './internal/presets';
-import { PromptInjectionError, CostLimitError, ContentViolationError, ModelPolicyError, OutputSchemaError, StreamAbortError, JailbreakError, TopicViolationError } from './errors';
+import { PromptInjectionError, CostLimitError, ContentViolationError, ModelPolicyError, OutputSchemaError, StreamAbortError, JailbreakError, TopicViolationError, ToolGuardError, ChainOfThoughtError } from './errors';
 import { wrapAnthropicClient } from './providers/anthropic';
 import { wrapGeminiClient } from './providers/gemini';
 import type {
@@ -1082,6 +1084,48 @@ export class LaunchPromptly {
                             if (outputSecretDetections.length > 0) {
                               emit('secret.detected', { detections: outputSecretDetections, direction: 'output' });
                               security.secretDetection.onDetect?.(outputSecretDetections);
+                            }
+                          }
+
+                          // Post-call: tool guard — validate tool calls in LLM response
+                          if (security.toolGuard?.enabled !== false && security.toolGuard) {
+                            const responseToolCallsForGuard = (result as any).choices?.[0]?.message?.tool_calls;
+                            if (responseToolCallsForGuard && Array.isArray(responseToolCallsForGuard)) {
+                              const toolCallInfos: ToolCallInfo[] = responseToolCallsForGuard.map((tc: any) => ({
+                                name: tc.function?.name ?? tc.name ?? '',
+                                arguments: tc.function?.arguments ?? tc.arguments ?? '{}',
+                              }));
+                              const toolGuardResult = checkToolCalls(toolCallInfos, security.toolGuard);
+                              if (toolGuardResult.violations.length > 0) {
+                                for (const v of toolGuardResult.violations) {
+                                  emit('tool.violation', { violation: v });
+                                  security.toolGuard.onViolation?.(v);
+                                }
+                                if (!isShadow && toolGuardResult.blocked) {
+                                  emit('tool.blocked', { violations: toolGuardResult.violations });
+                                  throw new ToolGuardError(toolGuardResult.violations);
+                                }
+                              }
+                            }
+                          }
+
+                          // Post-call: chain-of-thought guard — scan reasoning blocks
+                          if (security.chainOfThought?.enabled !== false && security.chainOfThought) {
+                            const reasoningText = extractReasoningText(result);
+                            if (reasoningText) {
+                              const cotResult = scanChainOfThought(reasoningText, security.chainOfThought);
+                              if (cotResult.violations.length > 0) {
+                                for (const v of cotResult.violations) {
+                                  const eventType = v.type === 'cot_injection' ? 'cot.injection'
+                                    : v.type === 'cot_system_leak' ? 'cot.system_leak'
+                                    : 'cot.goal_drift';
+                                  emit(eventType, { violation: v });
+                                  security.chainOfThought.onViolation?.(v);
+                                }
+                                if (!isShadow && cotResult.blocked) {
+                                  throw new ChainOfThoughtError(cotResult.violations);
+                                }
+                              }
                             }
                           }
 

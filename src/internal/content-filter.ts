@@ -24,6 +24,10 @@ export interface ContentFilterOptions {
   safeDomains?: SafeDomain[];
   /** Pluggable content filter providers (e.g., ML toxicity). */
   providers?: ContentFilterProvider[];
+  /** Explicit locale for multi-language content filtering. */
+  locale?: import('./content-locales/types').ContentLocale;
+  /** Auto-detect language and apply locale-specific patterns. */
+  autoDetectLanguage?: boolean;
 }
 
 export interface CustomPattern {
@@ -229,6 +233,31 @@ export function detectContentViolations(
           severity: custom.severity,
           location,
         });
+      }
+    }
+  }
+
+  // Check locale-specific patterns (explicit locale or auto-detect)
+  if (options?.locale || options?.autoDetectLanguage) {
+    const { getContentLocalePatterns } = require('./content-locales');
+    const localeRules = getContentLocalePatterns(text, {
+      locale: options.locale,
+      autoDetectLanguage: options.autoDetectLanguage,
+    });
+    for (const rule of localeRules) {
+      if (allowedCategories && !allowedCategories.has(rule.category as ContentCategory)) continue;
+      for (const pattern of rule.patterns) {
+        if (pattern.global) pattern.lastIndex = 0;
+        const match = pattern.exec(text);
+        if (match) {
+          violations.push({
+            category: rule.category,
+            matched: match[0],
+            severity: rule.severity,
+            location,
+          });
+          break;
+        }
       }
     }
   }

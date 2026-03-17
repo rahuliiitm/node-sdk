@@ -20,7 +20,23 @@ export type PIIType =
   | 'aadhaar'
   | 'eu_phone'
   | 'medicare'
-  | 'drivers_license';
+  | 'drivers_license'
+  // Locale-specific types (enabled via locales option)
+  | 'ca_sin'
+  | 'br_cpf'
+  | 'br_cnpj'
+  | 'br_phone'
+  | 'cn_national_id'
+  | 'cn_phone'
+  | 'jp_my_number'
+  | 'jp_phone'
+  | 'kr_rrn'
+  | 'kr_phone'
+  | 'de_tax_id'
+  | 'mx_rfc'
+  | 'mx_curp'
+  | 'mx_phone'
+  | 'fr_nir';
 
 export interface PIIDetection {
   type: PIIType;
@@ -32,6 +48,8 @@ export interface PIIDetection {
 
 export interface PIIDetectOptions {
   types?: PIIType[];
+  /** Enable country-specific PII patterns. Array of locale codes or 'all'. */
+  locales?: import('./pii-locales/types').PIILocale[] | 'all';
 }
 
 /** Provider interface for pluggable PII detectors (e.g., ML plugin). */
@@ -339,8 +357,16 @@ export function detectPII(
   const allowedTypes = options?.types ? new Set(options.types) : null;
   const detections: PIIDetection[] = [];
 
-  for (const pattern of PATTERNS) {
-    if (allowedTypes && !allowedTypes.has(pattern.type)) continue;
+  // Combine base patterns with locale patterns if requested
+  let allPatterns: Array<{ type: string; regex: RegExp; confidence: number; validate?: (m: string, t?: string, i?: number) => boolean }> = PATTERNS;
+  if (options?.locales) {
+    const { getLocalePatterns } = require('./pii-locales');
+    const localePatterns = getLocalePatterns(options.locales);
+    allPatterns = [...PATTERNS, ...localePatterns];
+  }
+
+  for (const pattern of allPatterns) {
+    if (allowedTypes && !allowedTypes.has(pattern.type as PIIType)) continue;
 
     // Reset regex state for global patterns
     pattern.regex.lastIndex = 0;
@@ -353,7 +379,7 @@ export function detectPII(
       if (pattern.validate && !pattern.validate(value, scanText, match.index)) continue;
 
       detections.push({
-        type: pattern.type,
+        type: pattern.type as PIIType,
         value,
         start: match.index,
         end: match.index + value.length,

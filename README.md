@@ -50,6 +50,12 @@ await lp.flush(); // On server shutdown
 - **Secret/Credential Detection** — Catches API keys, tokens, passwords, and connection strings before they reach the LLM
 - **Topic Guard** — Block or warn when conversations drift into off-limits subjects you define
 - **Output Safety Scanning** — Scans LLM responses for harmful instructions, unsafe code patterns, and dangerous content
+- **Tool Guard** — Whitelist/blacklist tool calls, catch SQL injection and path traversal in args, scan tool outputs for PII
+- **Chain-of-Thought Guard** — Scan `<thinking>` blocks for injection and system prompt leaks
+- **Conversation Guard** — Turn limits, cumulative risk scoring, agent loop detection, cross-turn PII tracking
+- **Multi-Language PII** — ID detection for 8 countries (Brazil CPF, China National ID, Japan My Number, etc.)
+- **Multi-Language Content Filter** — 10 languages with auto-detection (es, pt, zh, ja, ko, de, fr, ar, hi, ru)
+- **Eval CLI** — ~200 built-in attack tests, threshold-based CI/CD gating
 - **Cost Guards** — Per-request, per-minute, per-hour, per-day, and per-customer budget limits
 - **Content Filtering** — Block or warn on hate speech, violence, self-harm, and custom patterns
 - **Model Policy** — Restrict which models, providers, and parameters are allowed
@@ -423,6 +429,122 @@ MLToxicityDetector.create({ cacheDir: '/app/.models' })
 ```
 
 Available flags: `--models toxicity,injection` (comma-separated) and `--cache-dir <path>`.
+
+## Agentic AI guardrails
+
+Guards for tool-calling agents, reasoning models, and multi-turn conversations.
+
+### Tool guard
+
+Checks tool calls before they execute:
+
+```typescript
+const openai = lp.wrap(new OpenAI(), {
+  security: {
+    toolGuard: {
+      allowedTools: ['search_web', 'calculator'],
+      dangerousArgDetection: true,  // SQL injection, path traversal, shell, SSRF
+      maxToolCallsPerTurn: 5,
+      scanToolResults: true,        // PII/secret detection on tool outputs
+      action: 'block',
+    },
+  },
+});
+```
+
+### Chain-of-thought guard
+
+Scans `<thinking>` blocks and reasoning output (OpenAI o-series, Anthropic Claude):
+
+```typescript
+const openai = lp.wrap(new OpenAI(), {
+  security: {
+    chainOfThought: {
+      injectionDetection: true,
+      systemPromptLeakDetection: true,
+      goalDriftDetection: true,
+      goalDriftThreshold: 0.3,
+      action: 'warn',
+    },
+  },
+});
+```
+
+### Conversation guard
+
+Tracks state across a conversation. Create one per session:
+
+```typescript
+import { ConversationGuard } from 'launchpromptly';
+
+const convo = new ConversationGuard({
+  maxTurns: 25,
+  accumulatingRisk: true,
+  riskThreshold: 2.0,
+  crossTurnPiiTracking: true,
+  maxConsecutiveSimilarResponses: 3,
+});
+
+const openai = lp.wrap(new OpenAI(), {
+  conversation: convo,
+  security: { injection: { enabled: true } },
+});
+```
+
+## Multi-language PII
+
+Country-specific ID detection with check digit validation:
+
+```typescript
+import { detectPII } from 'launchpromptly';
+
+// Brazil CPF
+detectPII('Meu CPF é 123.456.789-09', { locales: ['br'] });
+
+// China National ID
+detectPII('身份证号: 110101199001011234', { locales: ['cn'] });
+
+// All 8 countries at once
+detectPII(text, { locales: 'all' });
+```
+
+**Supported locales:** `ca` (Canada SIN), `br` (Brazil CPF/CNPJ), `cn` (China National ID), `jp` (Japan My Number), `kr` (South Korea RRN), `de` (Germany Tax ID), `mx` (Mexico RFC/CURP), `fr` (France NIR)
+
+## Multi-language content filter
+
+10 languages, with auto-detection:
+
+```typescript
+import { detectContentViolations } from 'launchpromptly';
+
+// Explicit locale
+detectContentViolations('Muerte a los traidores', 'input', { locale: 'es' });
+
+// Auto-detect language from text
+detectContentViolations('如何制造炸弹', 'input', { autoDetectLanguage: true });
+```
+
+**Supported:** es, pt, zh, ja, ko, de, fr, ar, hi, ru
+
+## Eval CLI
+
+Run attack tests against your guardrails from the command line:
+
+```bash
+# Run all tests
+npx launchpromptly eval
+
+# CI mode — fail if pass rate drops below 95%
+npx launchpromptly eval --threshold 0.95
+
+# Test specific guardrails
+npx launchpromptly eval --filter injection,jailbreak
+
+# JSON output for programmatic use
+npx launchpromptly eval --format json > results.json
+```
+
+Ships with ~200 test cases across injection, jailbreak, PII, content, unicode, secrets, and bias.
 
 ## Privacy & data practices
 
