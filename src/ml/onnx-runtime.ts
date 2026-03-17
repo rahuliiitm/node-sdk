@@ -333,6 +333,67 @@ export class OnnxSession {
     return entities;
   }
 
+  /**
+   * Sentence embedding — mean-pooled hidden states.
+   *
+   * For semantic similarity, topic matching, drift detection.
+   * Works with sentence-transformer models (e.g. all-MiniLM-L6-v2).
+   */
+  async embed(text: string): Promise<Float32Array> {
+    const feeds = await this._tokenize(text);
+    const output = await this._session.run(feeds);
+
+    // Embedding models may output 'sentence_embedding' (already pooled)
+    // or 'last_hidden_state' / 'token_embeddings' (needs mean pooling)
+    if (output.sentence_embedding) {
+      return new Float32Array(output.sentence_embedding.data as Float32Array);
+    }
+
+    const hiddenKey = output.last_hidden_state
+      ? 'last_hidden_state'
+      : output.token_embeddings
+        ? 'token_embeddings'
+        : Object.keys(output)[0];
+    const data = output[hiddenKey].data as Float32Array;
+    const dims = output[hiddenKey].dims as number[]; // [1, seq_len, hidden_dim]
+    const seqLen = dims[1];
+    const hiddenDim = dims[2];
+
+    // Mean pooling over attended tokens
+    const mask = feeds.attention_mask.data;
+    const pooled = new Float32Array(hiddenDim);
+    let count = 0;
+    for (let i = 0; i < seqLen; i++) {
+      if (Number(mask[i]) === 1) {
+        for (let j = 0; j < hiddenDim; j++) {
+          pooled[j] += data[i * hiddenDim + j];
+        }
+        count++;
+      }
+    }
+    if (count > 0) {
+      for (let j = 0; j < hiddenDim; j++) pooled[j] /= count;
+    }
+    return pooled;
+  }
+
+  /**
+   * Compute cosine similarity between two embedding vectors.
+   * Returns a value in [-1, 1], where 1 = identical.
+   */
+  static cosine(a: Float32Array, b: Float32Array): number {
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+    for (let i = 0; i < a.length; i++) {
+      dot += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    return denom === 0 ? 0 : dot / denom;
+  }
+
   /** Clear all cached sessions. */
   static clearCache(): void {
     sessionCache.clear();

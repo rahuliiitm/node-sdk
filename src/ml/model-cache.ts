@@ -91,6 +91,24 @@ const MODEL_REGISTRY: Record<string, ModelEntry> = {
       'special_tokens_map.json',
     ],
   },
+  'Xenova/all-MiniLM-L6-v2': {
+    onnxFile: 'onnx/model.onnx',
+    quantizedFile: 'onnx/model_quantized.onnx',
+    files: [
+      'tokenizer.json',
+      'tokenizer_config.json',
+      'config.json',
+    ],
+  },
+  'cross-encoder/ms-marco-MiniLM-L-6-v2': {
+    onnxFile: 'onnx/model.onnx',
+    quantizedFile: 'onnx/model_quantized.onnx',
+    files: [
+      'tokenizer.json',
+      'tokenizer_config.json',
+      'config.json',
+    ],
+  },
 };
 
 /** Friendly name → model ID mapping for the CLI. */
@@ -99,6 +117,8 @@ export const MODEL_NAME_MAP: Record<string, string> = {
   injection: 'protectai/deberta-v3-base-prompt-injection-v2',
   'injection-small': 'protectai/deberta-v3-small-prompt-injection-v2',
   ner: 'Xenova/bert-base-NER',
+  embedding: 'Xenova/all-MiniLM-L6-v2',
+  nli: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
 };
 
 /** Get list of all registered model IDs. */

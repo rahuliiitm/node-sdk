@@ -11,6 +11,7 @@ import type { JailbreakDetectorProvider } from './jailbreak';
 import type { PIIDetectorProvider } from './pii';
 import type { ContentFilterProvider } from './content-filter';
 import type { HallucinationDetectorProvider } from './hallucination';
+import type { ResponseJudgeProvider } from './response-judge';
 
 /** Map of accepted guardrail names to canonical MLGuardrailType. */
 const GUARDRAIL_ALIASES: Record<string, MLGuardrailType> = {
@@ -20,6 +21,7 @@ const GUARDRAIL_ALIASES: Record<string, MLGuardrailType> = {
   toxicity: 'toxicity',
   contentFilter: 'toxicity', // alias
   hallucination: 'hallucination',
+  nliJudge: 'nliJudge',
 };
 
 const ALL_ML_GUARDRAILS: MLGuardrailType[] = [
@@ -28,6 +30,7 @@ const ALL_ML_GUARDRAILS: MLGuardrailType[] = [
   'pii',
   'toxicity',
   'hallucination',
+  'nliJudge',
 ];
 
 export interface ResolvedMLProviders {
@@ -36,6 +39,7 @@ export interface ResolvedMLProviders {
   pii?: PIIDetectorProvider;
   toxicity?: ContentFilterProvider;
   hallucination?: HallucinationDetectorProvider;
+  nliJudge?: ResponseJudgeProvider;
 }
 
 /**
@@ -132,6 +136,14 @@ export async function createMLProviders(
       }),
     });
   }
+  if (guardrails.has('nliJudge')) {
+    tasks.push({
+      name: 'nliJudge',
+      task: import('../ml/nli-judge').then(async ({ MLResponseJudge }) => {
+        result.nliJudge = await MLResponseJudge.create();
+      }),
+    });
+  }
 
   // Load independently — one model failure doesn't block the others
   const outcomes = await Promise.allSettled(tasks.map((t) => t.task));
@@ -184,6 +196,12 @@ export function mergeMLProviders(
     merged.hallucination = {
       ...merged.hallucination,
       providers: [...(merged.hallucination?.providers ?? []), mlProviders.hallucination],
+    };
+  }
+  if (mlProviders.nliJudge) {
+    merged.responseJudge = {
+      ...merged.responseJudge,
+      providers: [...(merged.responseJudge?.providers ?? []), mlProviders.nliJudge],
     };
   }
 

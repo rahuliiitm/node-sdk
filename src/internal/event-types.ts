@@ -93,6 +93,21 @@ export interface IngestEventPayload {
     faithfulness_score: number;
     severity: 'low' | 'medium' | 'high';
   };
+  contextEngine?: {
+    constraintCount: number;
+    role: string | null;
+    allowedTopicCount: number;
+    restrictedTopicCount: number;
+    forbiddenActionCount: number;
+    groundingMode: string;
+  };
+  responseJudge?: {
+    violated: boolean;
+    complianceScore: number;
+    violationCount: number;
+    violationTypes: string[];
+    severity: 'low' | 'medium' | 'high';
+  };
 }
 
 /**

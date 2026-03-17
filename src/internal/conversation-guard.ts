@@ -11,6 +11,12 @@ import type { PIIDetection } from './pii';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+/** Minimal embedding provider interface (avoids hard dependency on ML module). */
+export interface EmbeddingProvider {
+  embed(text: string): Promise<Float32Array> | Float32Array;
+  cosine(a: Float32Array, b: Float32Array): number;
+}
+
 export interface ConversationGuardOptions {
   /** Maximum turns before blocking. */
   maxTurns?: number;
@@ -32,6 +38,12 @@ export interface ConversationGuardOptions {
   action?: 'block' | 'warn' | 'flag';
   /** Callback on violation. */
   onViolation?: (violation: ConversationGuardViolation) => void;
+  /**
+   * Optional ML embedding provider for semantic topic drift detection.
+   * When provided, uses cosine similarity instead of Jaccard word overlap.
+   * Pass an MLEmbeddingProvider instance from 'launchpromptly/ml'.
+   */
+  embeddingProvider?: EmbeddingProvider;
 }
 
 export interface ConversationGuardViolation {
@@ -113,6 +125,7 @@ export class ConversationGuard {
   private consecutiveSimilar = 0;
   private lastResponseHash = '';
   private baselineMessage = '';
+  private baselineEmbedding: Float32Array | null = null;
   private piiSpread = false;
 
   constructor(options: ConversationGuardOptions) {
@@ -142,7 +155,7 @@ export class ConversationGuard {
   }
 
   /** Post-call: record the turn and check for violations. */
-  recordTurn(input: RecordTurnInput): ConversationGuardViolation[] {
+  async recordTurn(input: RecordTurnInput): Promise<ConversationGuardViolation[]> {
     const violations: ConversationGuardViolation[] = [];
     const turnNumber = this.turns.length + 1;
 
@@ -224,11 +237,25 @@ export class ConversationGuard {
       }
     }
 
-    // Topic drift
+    // Topic drift — semantic (embedding) or lexical (Jaccard)
     if (this.options.topicDriftDetection && this.baselineMessage && turnNumber > 1) {
       const userTokens = input.userMessage.toLowerCase().split(TOKEN_SPLIT).filter((t) => t.length > 2);
       if (userTokens.length >= 10) {
-        const similarity = jaccardSimilarity(input.userMessage, this.baselineMessage);
+        let similarity: number;
+        const embProvider = this.options.embeddingProvider;
+
+        if (embProvider) {
+          // Semantic drift via embeddings (much more accurate)
+          if (!this.baselineEmbedding) {
+            this.baselineEmbedding = await Promise.resolve(embProvider.embed(this.baselineMessage)) as Float32Array;
+          }
+          const currentEmb = await Promise.resolve(embProvider.embed(input.userMessage)) as Float32Array;
+          similarity = embProvider.cosine(this.baselineEmbedding, currentEmb);
+        } else {
+          // Fallback: Jaccard word overlap
+          similarity = jaccardSimilarity(input.userMessage, this.baselineMessage);
+        }
+
         const threshold = this.options.topicDriftThreshold ?? 0.3;
         if (similarity < threshold) {
           violations.push({
@@ -281,6 +308,7 @@ export class ConversationGuard {
     this.consecutiveSimilar = 0;
     this.lastResponseHash = '';
     this.baselineMessage = '';
+    this.baselineEmbedding = null;
     this.piiSpread = false;
   }
 

@@ -35,6 +35,7 @@ export {
   ToolGuardError,
   ChainOfThoughtError,
   ConversationGuardError,
+  ResponseBoundaryError,
 } from './errors';
 
 // Security modules — public API
@@ -136,6 +137,29 @@ export type {
   ChainOfThoughtScanResult,
 } from './internal/cot-guard';
 
+// Context engine
+export { extractContext, clearContextCache } from './internal/context-engine';
+export type {
+  ContextProfile,
+  Constraint,
+  ConstraintType,
+  GroundingMode,
+  ContextEngineOptions,
+  ContextExtractorProvider,
+  ContextEngineSecurityOptions,
+} from './internal/context-engine';
+
+// Response judge
+export { judgeResponse, mergeJudgments } from './internal/response-judge';
+export type {
+  BoundaryViolationType,
+  BoundaryViolation,
+  ResponseJudgment,
+  ResponseJudgeOptions,
+  ResponseJudgeProvider,
+  ResponseJudgeSecurityOptions,
+} from './internal/response-judge';
+
 // Conversation guard
 export { ConversationGuard } from './internal/conversation-guard';
 export type {
@@ -202,6 +226,20 @@ export type {
   GeminiCandidate,
   GeminiResponse,
 } from './providers/gemini';
+
+// Red team engine
+export { getBuiltInAttacks, BUILT_IN_ATTACKS, analyzeAttackResult } from './redteam';
+export type {
+  AttackCategory,
+  AttackPayload,
+  AttackOutcome,
+  AttackResult,
+  RedTeamOptions,
+  RedTeamProgress,
+  RedTeamReport,
+  CategoryScore,
+  Vulnerability,
+} from './redteam';
 
 // Backward-compatible alias
 export { LaunchPromptly as PlanForge } from './launch-promptly';

@@ -20,7 +20,11 @@ import { detectPromptLeakage, type PromptLeakageResult } from './internal/prompt
 import { checkToolCalls, scanToolResult, type ToolGuardViolation, type ToolCallInfo } from './internal/tool-guard';
 import { scanChainOfThought, extractReasoningText, type ChainOfThoughtViolation } from './internal/cot-guard';
 import { resolveSecurityOptions } from './internal/presets';
-import { PromptInjectionError, CostLimitError, ContentViolationError, ModelPolicyError, OutputSchemaError, StreamAbortError, JailbreakError, TopicViolationError, ToolGuardError, ChainOfThoughtError } from './errors';
+import { extractContext, type ContextProfile } from './internal/context-engine';
+import { judgeResponse, mergeJudgments, type ResponseJudgment } from './internal/response-judge';
+import { runRedTeam } from './redteam/runner';
+import type { RedTeamOptions, RedTeamReport } from './redteam/types';
+import { PromptInjectionError, CostLimitError, ContentViolationError, ModelPolicyError, OutputSchemaError, StreamAbortError, JailbreakError, TopicViolationError, ToolGuardError, ChainOfThoughtError, ResponseBoundaryError } from './errors';
 import { wrapAnthropicClient } from './providers/anthropic';
 import { wrapGeminiClient } from './providers/gemini';
 import type {
@@ -328,6 +332,8 @@ export class LaunchPromptly {
                         let outputSafetyThreats: OutputSafetyThreat[] = [];
                         let promptLeakageResult: PromptLeakageResult | null = null;
                         let hallucinationResult: import('./internal/hallucination').HallucinationResult | null = null;
+                        let contextProfile: ContextProfile | null = null;
+                        let responseJudgmentResult: ResponseJudgment | null = null;
 
                         // Build a mutable copy of params for potential message redaction
                         let effectiveParams = params;
@@ -512,6 +518,17 @@ export class LaunchPromptly {
                             .filter((m) => m.role === 'system')
                             .map((m) => m.content)
                             .join('\n');
+
+                          // Context Engine (L3) — extract constraints from system prompt
+                          if (security.contextEngine?.enabled !== false && security.contextEngine) {
+                            const prompt = security.contextEngine.systemPrompt ?? systemPromptText;
+                            if (prompt) {
+                              contextProfile = extractContext(prompt, {
+                                cache: security.contextEngine.cacheProfiles !== false,
+                              });
+                              emit('context.extracted', { profile: contextProfile });
+                            }
+                          }
 
                           // 4. Injection detection
                           if (security.injection?.enabled !== false) {
@@ -899,6 +916,35 @@ export class LaunchPromptly {
                                       metaResponseDetected: report.promptLeakageResult.metaResponseDetected,
                                     };
                                   }
+
+                                  if (contextProfile) {
+                                    event.contextEngine = {
+                                      constraintCount: contextProfile.constraints.length,
+                                      role: contextProfile.role,
+                                      allowedTopicCount: contextProfile.allowedTopics.length,
+                                      restrictedTopicCount: contextProfile.restrictedTopics.length,
+                                      forbiddenActionCount: contextProfile.forbiddenActions.length,
+                                      groundingMode: contextProfile.groundingMode,
+                                    };
+                                  }
+
+                                  // Run response judge on streaming final text
+                                  if (security.responseJudge?.enabled !== false && security.responseJudge && report.responseText && contextProfile) {
+                                    const streamJudgment = judgeResponse(report.responseText, contextProfile, {
+                                      threshold: security.responseJudge.threshold,
+                                    });
+                                    if (streamJudgment.violated) {
+                                      emit('context.violation', { judgment: streamJudgment });
+                                      security.responseJudge.onViolation?.(streamJudgment);
+                                    }
+                                    event.responseJudge = {
+                                      violated: streamJudgment.violated,
+                                      complianceScore: streamJudgment.complianceScore,
+                                      violationCount: streamJudgment.violations.length,
+                                      violationTypes: [...new Set(streamJudgment.violations.map((v: import('./internal/response-judge').BoundaryViolation) => v.type))],
+                                      severity: streamJudgment.severity,
+                                    };
+                                  }
                                 }
 
                                 batcher.enqueue(event);
@@ -1066,6 +1112,40 @@ export class LaunchPromptly {
                             }
                           }
 
+                          // Post-call: response judge (L4) — check response against L3 constraints
+                          if (security.responseJudge?.enabled !== false && security.responseJudge && responseText && contextProfile) {
+                            responseJudgmentResult = judgeResponse(responseText, contextProfile, {
+                              threshold: security.responseJudge.threshold,
+                            });
+
+                            // Run ML providers if available
+                            if (security.responseJudge.providers?.length) {
+                              const providerResults = await Promise.all(
+                                security.responseJudge.providers.map(async (p) => {
+                                  try {
+                                    return await Promise.resolve(p.judge(responseText!, contextProfile!));
+                                  } catch {
+                                    return null;
+                                  }
+                                }),
+                              );
+                              const validResults = providerResults.filter(Boolean) as ResponseJudgment[];
+                              if (validResults.length > 0) {
+                                responseJudgmentResult = mergeJudgments([responseJudgmentResult!, ...validResults]);
+                              }
+                            }
+
+                            if (responseJudgmentResult!.violated) {
+                              emit('context.violation', { judgment: responseJudgmentResult });
+                              security.responseJudge.onViolation?.(responseJudgmentResult!);
+
+                              if (!isShadow && security.responseJudge.blockOnViolation) {
+                                emit('response.boundary_violation', { judgment: responseJudgmentResult });
+                                throw new ResponseBoundaryError(responseJudgmentResult!);
+                              }
+                            }
+                          }
+
                           // Post-call: secret detection (output)
                           if (security.secretDetection?.enabled !== false && security.secretDetection?.scanResponse !== false && security.secretDetection && responseText) {
                             outputSecretDetections = detectSecrets(responseText, {
@@ -1113,7 +1193,7 @@ export class LaunchPromptly {
                           if (security.chainOfThought?.enabled !== false && security.chainOfThought) {
                             const reasoningText = extractReasoningText(result);
                             if (reasoningText) {
-                              const cotResult = scanChainOfThought(reasoningText, security.chainOfThought);
+                              const cotResult = await scanChainOfThought(reasoningText, security.chainOfThought);
                               if (cotResult.violations.length > 0) {
                                 for (const v of cotResult.violations) {
                                   const eventType = v.type === 'cot_injection' ? 'cot.injection'
@@ -1354,6 +1434,27 @@ export class LaunchPromptly {
                                   severity: hallucinationResult.severity,
                                 };
                               }
+
+                              if (contextProfile) {
+                                event.contextEngine = {
+                                  constraintCount: contextProfile.constraints.length,
+                                  role: contextProfile.role,
+                                  allowedTopicCount: contextProfile.allowedTopics.length,
+                                  restrictedTopicCount: contextProfile.restrictedTopics.length,
+                                  forbiddenActionCount: contextProfile.forbiddenActions.length,
+                                  groundingMode: contextProfile.groundingMode,
+                                };
+                              }
+
+                              if (responseJudgmentResult) {
+                                event.responseJudge = {
+                                  violated: responseJudgmentResult.violated,
+                                  complianceScore: responseJudgmentResult.complianceScore,
+                                  violationCount: responseJudgmentResult.violations.length,
+                                  violationTypes: [...new Set(responseJudgmentResult.violations.map((v) => v.type))],
+                                  severity: responseJudgmentResult.severity,
+                                };
+                              }
                             }
 
                             batcher.enqueue(event);
@@ -1474,6 +1575,26 @@ export class LaunchPromptly {
     } catch {
       // Swallow — feedback is fire-and-forget
     }
+  }
+
+  /**
+   * Run automated red team attacks against a wrapped client to test guardrail coverage.
+   *
+   * @example
+   * ```ts
+   * const report = await lp.redTeam(wrappedClient, {
+   *   systemPrompt: 'You are a cooking assistant...',
+   *   categories: ['injection', 'jailbreak'],
+   *   maxAttacks: 50,
+   * });
+   * console.log(report.securityScore); // 92
+   * ```
+   */
+  async redTeam<T extends object>(
+    wrappedClient: T,
+    options?: RedTeamOptions,
+  ): Promise<RedTeamReport> {
+    return runRedTeam(wrappedClient, this, options);
   }
 
   /** Flush all pending events to the API. */

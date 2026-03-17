@@ -21,7 +21,7 @@ export interface WrapOptions {
 }
 
 /** Guardrail types that have ML provider implementations. */
-export type MLGuardrailType = 'injection' | 'jailbreak' | 'pii' | 'toxicity' | 'contentFilter' | 'hallucination';
+export type MLGuardrailType = 'injection' | 'jailbreak' | 'pii' | 'toxicity' | 'contentFilter' | 'hallucination' | 'nliJudge';
 
 /** Security configuration for the wrap() pipeline. */
 export interface SecurityOptions {
@@ -36,7 +36,7 @@ export interface SecurityOptions {
    * - `false` (default) → regex/rule-based only
    * - `string[]` → enable ML only for listed guardrails
    *
-   * Valid names: 'injection', 'jailbreak', 'pii', 'toxicity' (alias: 'contentFilter'), 'hallucination'
+   * Valid names: 'injection', 'jailbreak', 'pii', 'toxicity' (alias: 'contentFilter'), 'hallucination', 'nliJudge'
    *
    * Requires: npm install @huggingface/transformers
    */
@@ -57,6 +57,8 @@ export interface SecurityOptions {
   hallucination?: import('./internal/hallucination').HallucinationOptions;
   toolGuard?: import('./internal/tool-guard').ToolGuardOptions;
   chainOfThought?: import('./internal/cot-guard').ChainOfThoughtGuardOptions;
+  contextEngine?: import('./internal/context-engine').ContextEngineSecurityOptions;
+  responseJudge?: import('./internal/response-judge').ResponseJudgeSecurityOptions;
   audit?: {
     logLevel?: 'none' | 'summary' | 'detailed';
   };
@@ -233,7 +235,10 @@ export type GuardrailEventType =
   | 'conversation.topic_drift'
   | 'conversation.risk_threshold'
   | 'conversation.agent_loop'
-  | 'conversation.pii_spread';
+  | 'conversation.pii_spread'
+  | 'context.extracted'
+  | 'context.violation'
+  | 'response.boundary_violation';
 
 /** Payload emitted when a guardrail event fires. */
 export interface GuardrailEvent {

@@ -51,6 +51,15 @@ export type { MLJailbreakDetectorOptions } from './jailbreak-detector';
 export { MLHallucinationDetector } from './hallucination-detector';
 export type { MLHallucinationDetectorOptions } from './hallucination-detector';
 
+export { MLEmbeddingProvider } from './embedding-provider';
+export type { MLEmbeddingProviderOptions } from './embedding-provider';
+
+export { MLResponseJudge } from './nli-judge';
+export type { MLResponseJudgeOptions } from './nli-judge';
+
+export { loadAttackIndex, matchAgainstIndex, hasAttackMatch } from './attack-embeddings';
+export type { AttackEmbeddingIndex, AttackMatch, AttackCategory } from './attack-embeddings';
+
 export { OnnxSession } from './onnx-runtime';
 export type { OnnxSessionOptions } from './onnx-runtime';
 

@@ -12,6 +12,7 @@ import type { StreamViolation } from './types';
 import type { ToolGuardViolation } from './internal/tool-guard';
 import type { ChainOfThoughtViolation } from './internal/cot-guard';
 import type { ConversationGuardViolation } from './internal/conversation-guard';
+import type { ResponseJudgment } from './internal/response-judge';
 import type { SchemaValidationError as SchemaError } from './internal/schema-validator';
 
 export class PromptInjectionError extends Error {
@@ -139,5 +140,18 @@ export class ConversationGuardError extends Error {
     super(`Conversation guard: ${violation.type} at turn ${violation.currentTurn} — ${violation.details}`);
     this.name = 'ConversationGuardError';
     this.violation = violation;
+  }
+}
+
+export class ResponseBoundaryError extends Error {
+  readonly judgment: ResponseJudgment;
+
+  constructor(judgment: ResponseJudgment) {
+    const types = [...new Set(judgment.violations.map((v) => v.type))].join(', ');
+    super(
+      `Response boundary violation: ${types} (compliance: ${judgment.complianceScore.toFixed(2)}, severity: ${judgment.severity})`,
+    );
+    this.name = 'ResponseBoundaryError';
+    this.judgment = judgment;
   }
 }

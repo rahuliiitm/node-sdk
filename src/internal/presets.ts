@@ -21,6 +21,8 @@ const PRESETS: Record<SensitivityPreset, Partial<SecurityOptions>> = {
     unicodeSanitizer: { action: 'block', detectHomoglyphs: true },
     toolGuard: { enabled: true, dangerousArgDetection: true, action: 'block' },
     chainOfThought: { enabled: true, injectionDetection: true, action: 'block' },
+    contextEngine: { enabled: true, enhanceInjection: true },
+    responseJudge: { enabled: true, threshold: 0.6, blockOnViolation: true },
   },
   balanced: {
     injection: { blockThreshold: 0.7, blockOnHighRisk: true },
@@ -31,6 +33,8 @@ const PRESETS: Record<SensitivityPreset, Partial<SecurityOptions>> = {
     unicodeSanitizer: { action: 'strip', detectHomoglyphs: true },
     toolGuard: { enabled: true, dangerousArgDetection: true, action: 'warn' },
     chainOfThought: { enabled: true, injectionDetection: true, action: 'warn' },
+    contextEngine: { enabled: true, enhanceInjection: true },
+    responseJudge: { enabled: true, threshold: 0.5, blockOnViolation: false },
   },
   permissive: {
     injection: { blockThreshold: 0.85, blockOnHighRisk: false },
@@ -40,6 +44,8 @@ const PRESETS: Record<SensitivityPreset, Partial<SecurityOptions>> = {
     secretDetection: { action: 'warn' },
     unicodeSanitizer: { action: 'warn' },
     toolGuard: { enabled: true, dangerousArgDetection: true, action: 'flag' },
+    contextEngine: { enabled: true },
+    responseJudge: { enabled: true, threshold: 0.3, blockOnViolation: false },
   },
 };
 

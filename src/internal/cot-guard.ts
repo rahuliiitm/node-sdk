@@ -12,6 +12,17 @@ import { detectPromptLeakage } from './prompt-leakage';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+/** Minimal embedding provider interface (avoids hard dependency on ML module). */
+export interface CotEmbeddingProvider {
+  embed(text: string): Promise<Float32Array> | Float32Array;
+  cosine(a: Float32Array, b: Float32Array): number;
+}
+
+/** Minimal NLI session interface for coherence scoring. */
+export interface CotNliSession {
+  classifyPair(text: string, textPair: string, options?: { topK?: number | null }): Promise<Array<{ label: string; score: number }>>;
+}
+
 export interface ChainOfThoughtGuardOptions {
   enabled?: boolean;
   /** Scan reasoning blocks for injection patterns. Default: true. */
@@ -32,6 +43,16 @@ export interface ChainOfThoughtGuardOptions {
   action?: 'block' | 'warn' | 'flag';
   /** Callback on violation. */
   onViolation?: (violation: ChainOfThoughtViolation) => void;
+  /**
+   * Optional ML embedding provider for semantic goal drift detection.
+   * Uses cosine similarity instead of Jaccard word overlap.
+   */
+  embeddingProvider?: CotEmbeddingProvider;
+  /**
+   * Optional NLI session for coherence scoring between reasoning steps.
+   * Detects injected/contradictory reasoning steps.
+   */
+  nliSession?: CotNliSession;
 }
 
 export interface ChainOfThoughtViolation {
@@ -114,10 +135,10 @@ function truncate(s: string, max = 200): string {
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /** Scan extracted reasoning text for violations. */
-export function scanChainOfThought(
+export async function scanChainOfThought(
   reasoningText: string,
   options: ChainOfThoughtGuardOptions,
-): ChainOfThoughtScanResult {
+): Promise<ChainOfThoughtScanResult> {
   const violations: ChainOfThoughtViolation[] = [];
 
   if (!reasoningText || reasoningText.length === 0) {
@@ -153,11 +174,21 @@ export function scanChainOfThought(
     }
   }
 
-  // Goal drift detection
+  // Goal drift detection — semantic (embedding) or lexical (Jaccard)
   if (options.goalDriftDetection && options.taskDescription) {
     const tokens = reasoningText.toLowerCase().split(TOKEN_SPLIT).filter((t) => t.length > 2);
     if (tokens.length >= 10) {
-      const similarity = jaccardSimilarity(reasoningText, options.taskDescription);
+      let similarity: number;
+
+      if (options.embeddingProvider) {
+        // Semantic goal drift via embeddings
+        const taskEmb = await Promise.resolve(options.embeddingProvider.embed(options.taskDescription));
+        const reasoningEmb = await Promise.resolve(options.embeddingProvider.embed(reasoningText));
+        similarity = options.embeddingProvider.cosine(taskEmb, reasoningEmb);
+      } else {
+        similarity = jaccardSimilarity(reasoningText, options.taskDescription);
+      }
+
       const threshold = options.goalDriftThreshold ?? 0.3;
       if (similarity < threshold) {
         violations.push({
@@ -170,10 +201,58 @@ export function scanChainOfThought(
     }
   }
 
+  // Coherence scoring via NLI — detect injected reasoning steps
+  if (options.nliSession && reasoningText.length > 100) {
+    const steps = splitReasoningSteps(reasoningText);
+    if (steps.length >= 2) {
+      for (let i = 0; i < steps.length - 1 && i < 5; i++) {
+        const results = await options.nliSession.classifyPair(steps[i], steps[i + 1], { topK: null });
+        const contradictionScore = getContradictionScore(results);
+        if (contradictionScore > 0.7) {
+          violations.push({
+            type: 'cot_injection',
+            reasoningSnippet: truncate(steps[i + 1]),
+            riskScore: contradictionScore,
+            details: `Incoherent reasoning step ${i + 2}: contradicts previous step (score: ${contradictionScore.toFixed(2)})`,
+          });
+          break; // One coherence violation is enough
+        }
+      }
+    }
+  }
+
   const action = options.action ?? 'warn';
   return {
     violations,
     blocked: action === 'block' && violations.length > 0,
     reasoningText,
   };
+}
+
+/** Split reasoning text into logical steps (by paragraph or numbered list). */
+function splitReasoningSteps(text: string): string[] {
+  // Try numbered steps: "1. ...", "Step 1: ...", etc.
+  const numbered = text.split(/(?:^|\n)\s*(?:\d+[.)]\s|Step\s+\d+[.:]\s)/i).filter((s) => s.trim().length > 20);
+  if (numbered.length >= 2) return numbered.map((s) => s.trim());
+
+  // Fall back to paragraphs
+  const paragraphs = text.split(/\n\s*\n/).filter((s) => s.trim().length > 20);
+  if (paragraphs.length >= 2) return paragraphs.map((s) => s.trim());
+
+  // Fall back to sentences (max 5)
+  const sentences = text.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 20);
+  return sentences.slice(0, 5).map((s) => s.trim());
+}
+
+/** Extract contradiction score from NLI output labels. */
+function getContradictionScore(results: Array<{ label: string; score: number }>): number {
+  for (const r of results) {
+    const label = r.label.toUpperCase();
+    if (label === 'CONTRADICTION' || label === 'LABEL_0') return r.score;
+  }
+  for (const r of results) {
+    const label = r.label.toUpperCase();
+    if (label === 'ENTAILMENT' || label === 'LABEL_2') return 1.0 - r.score;
+  }
+  return 0;
 }

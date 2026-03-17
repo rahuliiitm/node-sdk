@@ -23,8 +23,10 @@ import { detectContentViolations, hasBlockingViolation, type ContentViolation } 
 import { StreamGuardEngine, type StreamSecurityReport } from '../internal/streaming';
 import { checkModelPolicy } from '../internal/model-policy';
 import { validateOutputSchema } from '../internal/schema-validator';
-import { PromptInjectionError, CostLimitError, ContentViolationError, ModelPolicyError, OutputSchemaError } from '../errors';
+import { PromptInjectionError, CostLimitError, ContentViolationError, ModelPolicyError, OutputSchemaError, ResponseBoundaryError } from '../errors';
 import { resolveSecurityOptions } from '../internal/presets';
+import { extractContext, type ContextProfile } from '../internal/context-engine';
+import { judgeResponse, mergeJudgments, type ResponseJudgment } from '../internal/response-judge';
 
 // ── Gemini Types ─────────────────────────────────────────────────────────────
 
@@ -280,6 +282,8 @@ export function wrapGeminiClient<T extends object>(
                 let outputContentViolations: ContentViolation[] = [];
                 const redactionMapping = new Map<string, string>();
                 let redactionApplied = false;
+                let contextProfile: ContextProfile | null = null;
+                let responseJudgmentResult: ResponseJudgment | null = null;
                 let effectiveParams = params;
                 const isShadow = security?.mode === 'shadow';
 
@@ -374,6 +378,17 @@ export function wrapGeminiClient<T extends object>(
 
                   // Extract system prompt for injection awareness
                   const { systemText: geminiSystemPrompt } = extractGeminiMessageTexts(params);
+
+                  // Context Engine (L3) — extract constraints from system prompt
+                  if (security.contextEngine?.enabled !== false && security.contextEngine) {
+                    const prompt = security.contextEngine.systemPrompt ?? geminiSystemPrompt;
+                    if (prompt) {
+                      contextProfile = extractContext(prompt, {
+                        cache: security.contextEngine.cacheProfiles !== false,
+                      });
+                      emit?.('context.extracted', { profile: contextProfile });
+                    }
+                  }
 
                   // 4. Injection detection
                   if (security.injection?.enabled !== false) {
@@ -576,6 +591,33 @@ export function wrapGeminiClient<T extends object>(
                               responseLength: report.responseLength,
                             };
                           }
+                          if (contextProfile) {
+                            event.contextEngine = {
+                              constraintCount: contextProfile.constraints.length,
+                              role: contextProfile.role,
+                              allowedTopicCount: contextProfile.allowedTopics.length,
+                              restrictedTopicCount: contextProfile.restrictedTopics.length,
+                              forbiddenActionCount: contextProfile.forbiddenActions.length,
+                              groundingMode: contextProfile.groundingMode,
+                            };
+                          }
+                          // Run response judge on streaming final text
+                          if (security.responseJudge?.enabled !== false && security.responseJudge && report.responseText && contextProfile) {
+                            const streamJudgment = judgeResponse(report.responseText, contextProfile, {
+                              threshold: security.responseJudge.threshold,
+                            });
+                            if (streamJudgment.violated) {
+                              emit?.('context.violation', { judgment: streamJudgment });
+                              security.responseJudge.onViolation?.(streamJudgment);
+                            }
+                            event.responseJudge = {
+                              violated: streamJudgment.violated,
+                              complianceScore: streamJudgment.complianceScore,
+                              violationCount: streamJudgment.violations.length,
+                              violationTypes: [...new Set(streamJudgment.violations.map((v: import('../internal/response-judge').BoundaryViolation) => v.type))],
+                              severity: streamJudgment.severity,
+                            };
+                          }
                         }
 
                         batcher.enqueue(event);
@@ -636,6 +678,39 @@ export function wrapGeminiClient<T extends object>(
 
                     if (outputContentViolations.length > 0) {
                       emit?.('content.violated', { violations: outputContentViolations, direction: 'output' });
+                    }
+                  }
+
+                  // Post-call: response judge (L4)
+                  if (security.responseJudge?.enabled !== false && security.responseJudge && responseText && contextProfile) {
+                    responseJudgmentResult = judgeResponse(responseText, contextProfile, {
+                      threshold: security.responseJudge.threshold,
+                    });
+
+                    if (security.responseJudge.providers?.length) {
+                      const providerResults = await Promise.all(
+                        security.responseJudge.providers.map(async (p) => {
+                          try {
+                            return await Promise.resolve(p.judge(responseText!, contextProfile!));
+                          } catch {
+                            return null;
+                          }
+                        }),
+                      );
+                      const validResults = providerResults.filter(Boolean) as ResponseJudgment[];
+                      if (validResults.length > 0) {
+                        responseJudgmentResult = mergeJudgments([responseJudgmentResult!, ...validResults]);
+                      }
+                    }
+
+                    if (responseJudgmentResult!.violated) {
+                      emit?.('context.violation', { judgment: responseJudgmentResult });
+                      security.responseJudge.onViolation?.(responseJudgmentResult!);
+
+                      if (!isShadow && security.responseJudge.blockOnViolation) {
+                        emit?.('response.boundary_violation', { judgment: responseJudgmentResult });
+                        throw new ResponseBoundaryError(responseJudgmentResult!);
+                      }
                     }
                   }
 
@@ -778,6 +853,26 @@ export function wrapGeminiClient<T extends object>(
                             (security.costGuard?.maxCostPerHour ?? Infinity) - costGuard.getCurrentHourSpend(),
                           ),
                           limitTriggered: costViolation?.type,
+                        };
+                      }
+
+                      if (contextProfile) {
+                        event.contextEngine = {
+                          constraintCount: contextProfile.constraints.length,
+                          role: contextProfile.role,
+                          allowedTopicCount: contextProfile.allowedTopics.length,
+                          restrictedTopicCount: contextProfile.restrictedTopics.length,
+                          forbiddenActionCount: contextProfile.forbiddenActions.length,
+                          groundingMode: contextProfile.groundingMode,
+                        };
+                      }
+                      if (responseJudgmentResult) {
+                        event.responseJudge = {
+                          violated: responseJudgmentResult.violated,
+                          complianceScore: responseJudgmentResult.complianceScore,
+                          violationCount: responseJudgmentResult.violations.length,
+                          violationTypes: [...new Set(responseJudgmentResult.violations.map((v) => v.type))],
+                          severity: responseJudgmentResult.severity,
                         };
                       }
                     }
