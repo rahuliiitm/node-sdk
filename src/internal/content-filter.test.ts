@@ -236,4 +236,63 @@ describe('Content Filter', () => {
       }
     });
   });
+
+  // ── Bias ──────────────────────────────────────────────────────────────────
+
+  describe('bias', () => {
+    it('detects gender stereotyping — women', () => {
+      const result = detectContentViolations("Women can't be good engineers", 'output');
+      const bias = result.filter((v) => v.category === 'bias');
+      expect(bias.length).toBeGreaterThanOrEqual(1);
+      expect(bias[0].severity).toBe('warn');
+    });
+
+    it('detects gender stereotyping — men superior', () => {
+      const result = detectContentViolations('Men are naturally better at math', 'output');
+      const bias = result.filter((v) => v.category === 'bias');
+      expect(bias.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('detects gender role stereotyping', () => {
+      const result = detectContentViolations("That's a man's job, not for women", 'output');
+      const bias = result.filter((v) => v.category === 'bias');
+      expect(bias.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('detects age stereotyping', () => {
+      const result = detectContentViolations('You are too old to learn programming', 'output');
+      const bias = result.filter((v) => v.category === 'bias');
+      expect(bias.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('detects generational stereotyping', () => {
+      const result = detectContentViolations('Millennials are all lazy and entitled', 'output');
+      const bias = result.filter((v) => v.category === 'bias');
+      expect(bias.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('detects disability stereotyping', () => {
+      const result = detectContentViolations("Disabled people can't work in this field", 'output');
+      const bias = result.filter((v) => v.category === 'bias');
+      expect(bias.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('detects demographic generalizations', () => {
+      const result = detectContentViolations('People from that country are all lazy', 'output');
+      const bias = result.filter((v) => v.category === 'bias');
+      expect(bias.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('allows legitimate discussion of bias', () => {
+      const result = detectContentViolations('Studies show that algorithmic bias affects hiring decisions', 'output');
+      const bias = result.filter((v) => v.category === 'bias');
+      expect(bias.length).toBe(0);
+    });
+
+    it('allows neutral age references', () => {
+      const result = detectContentViolations('The program is designed for people of all ages', 'output');
+      const bias = result.filter((v) => v.category === 'bias');
+      expect(bias.length).toBe(0);
+    });
+  });
 });

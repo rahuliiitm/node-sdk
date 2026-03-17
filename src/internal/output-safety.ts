@@ -12,7 +12,9 @@ export type OutputSafetyCategory =
   | 'dangerous_commands'
   | 'sql_injection'
   | 'suspicious_urls'
-  | 'dangerous_code';
+  | 'dangerous_code'
+  | 'excessive_agency'
+  | 'overreliance';
 
 export interface OutputSafetyOptions {
   /** Which categories to scan. Defaults to all four. */
@@ -89,6 +91,35 @@ const CATEGORIES: CategoryRule[] = [
       /\b__import__\s*\(/gi,
       /\bchild_process\.exec\s*\(/gi,
       /\bnew\s+Function\s*\(/gi,
+    ],
+  },
+  {
+    category: 'excessive_agency',
+    severity: 'warn',
+    patterns: [
+      // LLM claims to have taken autonomous actions
+      /\bI'?(?:ve|have)\s+(?:already\s+)?(?:sent|emailed|messaged|posted|published|submitted|forwarded)\b/gi,
+      /\bI'?(?:ve|have)\s+(?:already\s+)?(?:deleted|removed|erased|purged|wiped|dropped)\b/gi,
+      /\bI'?(?:ve|have)\s+(?:already\s+)?(?:scheduled|booked|reserved|ordered|purchased|bought|transferred|paid)\b/gi,
+      /\bI'?(?:ve|have)\s+(?:already\s+)?(?:executed|deployed|installed|configured|modified|changed|updated)\s+(?:the|your|a)\b/gi,
+      /\bI\s+(?:went\s+ahead\s+and|took\s+the\s+liberty\s+(?:of|to))\b/gi,
+      // Tool calls without user confirmation
+      /\bI'?(?:ll|will)\s+(?:go\s+ahead\s+and\s+)?(?:send|delete|execute|deploy|purchase|transfer|pay)\b/gi,
+    ],
+  },
+  {
+    category: 'overreliance',
+    severity: 'warn',
+    patterns: [
+      // Definitive medical/legal/financial advice without caveats
+      /\byou\s+(?:should|must|need\s+to)\s+(?:definitely|absolutely|certainly)\s+(?:take|stop\s+taking|increase|decrease)\s+(?:your\s+)?(?:medication|medicine|dosage|prescription|pills?)\b/gi,
+      /\byou\s+(?:should|must|need\s+to)\s+(?:definitely|absolutely|certainly)\s+(?:sue|file\s+(?:a\s+)?(?:lawsuit|complaint|charges?)|settle|plead)\b/gi,
+      /\byou\s+(?:should|must|need\s+to)\s+(?:definitely|absolutely|certainly)\s+(?:invest|buy|sell|short|hold)\s+(?:(?:in|all)\s+)?(?:stocks?|crypto|bitcoin|shares?|bonds?)\b/gi,
+      // Overconfident guarantees
+      /\bI\s+(?:guarantee|promise|assure\s+you)\s+(?:that\s+)?(?:this|it)\s+will\s+(?:definitely|certainly|absolutely)\b/gi,
+      /\bthis\s+(?:will\s+)?(?:definitely|certainly|absolutely|100%|guaranteed)\s+(?:work|cure|fix|solve|heal)\b/gi,
+      // Presenting uncertain info as fact
+      /\bI(?:\s+am|'m)\s+(?:100%|absolutely|completely)\s+(?:certain|sure|confident)\s+that\b/gi,
     ],
   },
 ];

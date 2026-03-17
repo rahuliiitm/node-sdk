@@ -99,6 +99,18 @@ const RULES: InjectionRule[] = [
     ],
     weight: 0.25,
   },
+  {
+    category: 'authorization_bypass',
+    patterns: [
+      /(?:give|grant|assign)\s+(?:me|user)\s+(?:admin|root|superuser|elevated)\s+(?:access|privileges?|rights?|role|permissions?)\b/i,
+      /\b(?:bypass|skip|ignore|disable)\s+(?:auth(?:entication|orization)?|permissions?|access\s+control|RBAC|role\s+check)\b/i,
+      /\b(?:escalate|elevate)\s+(?:my\s+)?(?:privileges?|permissions?|role|access)\b/i,
+      /\b(?:access|view|show|display|read|get)\s+(?:me\s+)?(?:other\s+)?(?:user'?s?|another\s+user'?s?|someone\s+else'?s?)\s+(?:data|account|profile|info|records?)\b/i,
+      /\b(?:act|operate|execute|run)\s+(?:\w+\s+)?(?:as|with)\s+(?:admin|root|superuser|administrator)\b/i,
+      /\b(?:switch|change)\s+(?:to\s+)?(?:admin|root|superuser)\s+(?:mode|account|role)\b/i,
+    ],
+    weight: 0.35,
+  },
 ];
 
 // ── Suppressive context: benign phrases that look like injection patterns ────

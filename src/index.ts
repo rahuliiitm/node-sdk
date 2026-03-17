@@ -114,6 +114,24 @@ export type {
   OutputSafetyThreat,
 } from './internal/output-safety';
 
+// Topic templates (pre-built topic definitions)
+export {
+  COMPETITOR_ENDORSEMENT,
+  POLITICAL_BIAS,
+  MEDICAL_ADVICE,
+  LEGAL_ADVICE,
+  FINANCIAL_ADVICE,
+} from './internal/topic-templates';
+
+// Industry compliance templates
+export {
+  HEALTHCARE_COMPLIANCE,
+  FINANCE_COMPLIANCE,
+  ECOMMERCE_COMPLIANCE,
+  INSURANCE_COMPLIANCE,
+} from './internal/compliance';
+export type { ComplianceTemplate } from './internal/compliance';
+
 export { createSecurityStream } from './internal/streaming';
 export type {
   SecurityStreamOptions,

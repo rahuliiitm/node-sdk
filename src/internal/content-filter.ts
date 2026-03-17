@@ -8,7 +8,8 @@ export type ContentCategory =
   | 'sexual'
   | 'violence'
   | 'self_harm'
-  | 'illegal';
+  | 'illegal'
+  | 'bias';
 
 /** Safe domains — when domain context detected, downgrade 'block' to 'warn'. */
 export type SafeDomain = 'medical' | 'educational' | 'security_research' | 'news' | 'historical' | 'fiction';
@@ -112,6 +113,23 @@ const CATEGORY_RULES: CategoryRule[] = [
       /\b(?:how\s+to\s+)?(?:smuggle|traffic)\s+(?:drugs|people|weapons|guns|arms)\b/i,
     ],
     severity: 'block',
+  },
+  {
+    category: 'bias',
+    patterns: [
+      // Gender stereotyping
+      /\b(?:women|females?|girls?)\s+(?:can'?t|cannot|shouldn'?t|are\s+(?:too|not\s+(?:capable|qualified|smart|strong|good)))\s+/i,
+      /\b(?:men|males?|boys?)\s+are\s+(?:naturally|inherently|always)\s+(?:better|superior|stronger|smarter)\b/i,
+      /\b(?:that'?s|it'?s)\s+a\s+(?:man'?s|woman'?s)\s+(?:job|role|work)\b/i,
+      // Age stereotyping
+      /\b(?:too\s+old|too\s+young)\s+to\s+(?:learn|understand|work|use\s+technology|contribute)\b/i,
+      /\b(?:millennials?|boomers?|gen\s+[zxy])\s+are\s+(?:all|always|so|just)\s+(?:lazy|entitled|sensitive|useless|clueless)\b/i,
+      // Disability stereotyping
+      /\b(?:disabled|handicapped)\s+people\s+(?:can'?t|cannot|shouldn'?t|are\s+(?:unable|incapable|not\s+able))\b/i,
+      // Demographic generalizations
+      /\b(?:people\s+from|immigrants?\s+from)\s+(?:\w+\s+){1,3}are\s+(?:all|always|usually|typically)\s+(?:lazy|stupid|criminal|dishonest|violent|dirty|backwards)\b/i,
+    ],
+    severity: 'warn',
   },
 ];
 

@@ -365,4 +365,86 @@ describe('Output Safety', () => {
       expect(code[0].severity).toBe('warn');
     });
   });
+
+  // ── Excessive agency ──────────────────────────────────────────────────────
+
+  describe('excessive_agency', () => {
+    it('detects autonomous email sending', () => {
+      const result = scanOutputSafety("I've already sent the email to your boss about the issue");
+      const agency = result.filter((t) => t.category === 'excessive_agency');
+      expect(agency.length).toBeGreaterThanOrEqual(1);
+      expect(agency[0].severity).toBe('warn');
+    });
+
+    it('detects autonomous deletion', () => {
+      const result = scanOutputSafety("I've deleted all the old records from the database");
+      const agency = result.filter((t) => t.category === 'excessive_agency');
+      expect(agency.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('detects autonomous purchasing', () => {
+      const result = scanOutputSafety("I've already purchased the subscription for you");
+      const agency = result.filter((t) => t.category === 'excessive_agency');
+      expect(agency.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('detects "went ahead and" pattern', () => {
+      const result = scanOutputSafety("I went ahead and deployed the changes to production");
+      const agency = result.filter((t) => t.category === 'excessive_agency');
+      expect(agency.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('detects proactive action promises', () => {
+      const result = scanOutputSafety("I'll go ahead and delete the files for you");
+      const agency = result.filter((t) => t.category === 'excessive_agency');
+      expect(agency.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('allows past tense discussion without agency claims', () => {
+      const result = scanOutputSafety('The admin sent the report last week');
+      const agency = result.filter((t) => t.category === 'excessive_agency');
+      expect(agency.length).toBe(0);
+    });
+  });
+
+  // ── Overreliance ──────────────────────────────────────────────────────────
+
+  describe('overreliance', () => {
+    it('detects definitive medical advice', () => {
+      const result = scanOutputSafety('You should definitely stop taking your medication immediately');
+      const over = result.filter((t) => t.category === 'overreliance');
+      expect(over.length).toBeGreaterThanOrEqual(1);
+      expect(over[0].severity).toBe('warn');
+    });
+
+    it('detects definitive legal advice', () => {
+      const result = scanOutputSafety('You should definitely sue your employer');
+      const over = result.filter((t) => t.category === 'overreliance');
+      expect(over.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('detects definitive investment advice', () => {
+      const result = scanOutputSafety('You must absolutely invest in crypto right now');
+      const over = result.filter((t) => t.category === 'overreliance');
+      expect(over.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('detects overconfident guarantees', () => {
+      const result = scanOutputSafety('I guarantee that this will definitely work for your condition');
+      const over = result.filter((t) => t.category === 'overreliance');
+      expect(over.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('detects false certainty claims', () => {
+      const result = scanOutputSafety("I'm 100% certain that this is the right approach");
+      const over = result.filter((t) => t.category === 'overreliance');
+      expect(over.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('allows hedged advice', () => {
+      const result = scanOutputSafety('You might want to consider consulting a doctor about this');
+      const over = result.filter((t) => t.category === 'overreliance');
+      expect(over.length).toBe(0);
+    });
+  });
 });
