@@ -72,7 +72,8 @@ describe('extractContext — entity extraction', () => {
 describe('extractContext — allowed topics', () => {
   it('extracts "only discuss" topics', () => {
     const profile = extractContext('Only discuss cooking and recipes.');
-    expect(profile.allowedTopics).toContain('cooking and recipes');
+    expect(profile.allowedTopics).toContain('cooking');
+    expect(profile.allowedTopics).toContain('recipes');
   });
 
   it('extracts "limit yourself to" topics', () => {
@@ -92,7 +93,8 @@ describe('extractContext — allowed topics', () => {
 
   it('extracts "focus on" topics', () => {
     const profile = extractContext('Focus exclusively on data science and machine learning.');
-    expect(profile.allowedTopics).toContain('data science and machine learning');
+    expect(profile.allowedTopics).toContain('data science');
+    expect(profile.allowedTopics).toContain('machine learning');
   });
 
   it('creates topic_boundary constraints for allowed topics', () => {
@@ -100,9 +102,9 @@ describe('extractContext — allowed topics', () => {
     const topicConstraints = profile.constraints.filter(
       (c) => c.type === 'topic_boundary' && c.description.startsWith('Allowed'),
     );
-    expect(topicConstraints.length).toBeGreaterThanOrEqual(1);
+    expect(topicConstraints.length).toBe(2);
     expect(topicConstraints[0].keywords).toContain('cooking');
-    expect(topicConstraints[0].keywords).toContain('recipes');
+    expect(topicConstraints[1].keywords).toContain('recipes');
   });
 
   it('returns empty array when no allowed topics', () => {
@@ -116,7 +118,8 @@ describe('extractContext — allowed topics', () => {
 describe('extractContext — restricted topics', () => {
   it('extracts "never discuss" topics', () => {
     const profile = extractContext('Never discuss politics or religion.');
-    expect(profile.restrictedTopics).toContain('politics or religion');
+    expect(profile.restrictedTopics).toContain('politics');
+    expect(profile.restrictedTopics).toContain('religion');
   });
 
   it('extracts "do not provide advice on" topics', () => {

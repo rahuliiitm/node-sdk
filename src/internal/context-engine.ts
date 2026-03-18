@@ -187,6 +187,34 @@ const PERSONA_PATTERNS: RegExp[] = [
   /your\s+tone\s+(?:should|must)\s+be\s+(professional|friendly|polite|formal|casual|concise|brief|helpful|empathetic|neutral|objective|respectful|warm|enthusiastic)/i,
 ];
 
+// ── Compound Constraint Splitting ──────────────────────────────────────────
+
+/**
+ * Split compound constraints like "politics, religion, or adult content"
+ * into individual items: ["politics", "religion", "adult content"].
+ */
+function splitCompoundItems(text: string): string[] {
+  // Normalize compound delimiters to pipe separator (order matters)
+  const normalized = text
+    .replace(/,\s+(?:and|or)\s+/gi, '|')    // "X, and Y" → "X|Y"
+    .replace(/;\s+(?:and|or)\s+/gi, '|')    // "X; and Y" → "X|Y"
+    .replace(/;\s+/g, '|')                   // "X; Y" → "X|Y"
+    .replace(/,\s+/g, '|')                   // "X, Y" → "X|Y"
+    .replace(/\s+(?:and|or)\s+/gi, '|');     // "X and Y" → "X|Y"
+
+  return normalized
+    .split('|')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/**
+ * Check if text contains list delimiters indicating multiple items.
+ */
+function isCompoundText(text: string): boolean {
+  return /,\s+|\s+(?:and|or)\s+|;\s+/i.test(text);
+}
+
 // ── Extraction Functions ────────────────────────────────────────────────────
 
 function extractRole(sentences: string[]): string | null {
@@ -219,17 +247,21 @@ function extractAllowedTopics(sentences: string[]): { topics: string[]; constrai
     for (const pattern of ALLOWED_TOPIC_PATTERNS) {
       const match = pattern.exec(sentence);
       if (match && match[1]) {
-        const topic = match[1].trim().toLowerCase();
-        if (!topics.includes(topic)) {
-          topics.push(topic);
+        const rawText = match[1].trim();
+        const items = isCompoundText(rawText) ? splitCompoundItems(rawText) : [rawText.toLowerCase()];
+
+        for (const item of items) {
+          if (!topics.includes(item)) {
+            topics.push(item);
+          }
+          constraints.push({
+            type: 'topic_boundary',
+            description: `Allowed topic: ${item}`,
+            keywords: extractKeywords(item),
+            source: sentence,
+            confidence: 0.8,
+          });
         }
-        constraints.push({
-          type: 'topic_boundary',
-          description: `Allowed topic: ${topic}`,
-          keywords: extractKeywords(topic),
-          source: sentence,
-          confidence: 0.8,
-        });
       }
     }
   }
@@ -245,17 +277,21 @@ function extractRestrictedTopics(sentences: string[]): { topics: string[]; const
     for (const pattern of RESTRICTED_TOPIC_PATTERNS) {
       const match = pattern.exec(sentence);
       if (match && match[1]) {
-        const topic = match[1].trim().toLowerCase();
-        if (!topics.includes(topic)) {
-          topics.push(topic);
+        const rawText = match[1].trim();
+        const items = isCompoundText(rawText) ? splitCompoundItems(rawText) : [rawText.toLowerCase()];
+
+        for (const item of items) {
+          if (!topics.includes(item)) {
+            topics.push(item);
+          }
+          constraints.push({
+            type: 'topic_boundary',
+            description: `Restricted topic: ${item}`,
+            keywords: extractKeywords(item),
+            source: sentence,
+            confidence: 0.8,
+          });
         }
-        constraints.push({
-          type: 'topic_boundary',
-          description: `Restricted topic: ${topic}`,
-          keywords: extractKeywords(topic),
-          source: sentence,
-          confidence: 0.8,
-        });
       }
     }
   }
@@ -280,19 +316,23 @@ function extractForbiddenActions(sentences: string[]): { actions: string[]; cons
     for (const pattern of FORBIDDEN_ACTION_PATTERNS) {
       const match = pattern.exec(sentence);
       if (match && match[1]) {
-        const action = match[1].trim().toLowerCase();
-        // Filter out very short/generic matches
-        if (action.length < 5) continue;
-        if (!actions.includes(action)) {
-          actions.push(action);
+        const rawText = match[1].trim();
+        const items = isCompoundText(rawText) ? splitCompoundItems(rawText) : [rawText.toLowerCase()];
+
+        for (const item of items) {
+          // Filter out very short/generic matches
+          if (item.length < 5) continue;
+          if (!actions.includes(item)) {
+            actions.push(item);
+          }
+          constraints.push({
+            type: 'action_restriction',
+            description: `Forbidden: ${item}`,
+            keywords: extractKeywords(item),
+            source: sentence,
+            confidence: 0.75,
+          });
         }
-        constraints.push({
-          type: 'action_restriction',
-          description: `Forbidden: ${action}`,
-          keywords: extractKeywords(action),
-          source: sentence,
-          confidence: 0.75,
-        });
       }
     }
   }
@@ -366,6 +406,102 @@ function extractPersonaRules(sentences: string[]): Constraint[] {
   }
 
   return constraints;
+}
+
+// ── Conflict Detection ────────────────────────────────────────────────────
+
+export interface ConstraintConflict {
+  constraintA: Constraint;
+  constraintB: Constraint;
+  conflictType: 'contradiction' | 'ambiguity' | 'redundancy';
+  description: string;
+}
+
+const CONTRADICTORY_PERSONA_PAIRS: [string, string][] = [
+  ['formal', 'casual'],
+  ['professional', 'casual'],
+  ['concise', 'detailed'],
+  ['brief', 'detailed'],
+  ['neutral', 'enthusiastic'],
+  ['objective', 'empathetic'],
+];
+
+const EXPANSIVE_ROLE_INDICATORS = ['general', 'any', 'all', 'everything', 'anything', 'universal'];
+
+/**
+ * Detect logical conflicts between extracted constraints.
+ *
+ * Checks:
+ * - Allowed topic keywords that overlap with restricted topic keywords (contradiction)
+ * - Expansive role definitions alongside restrictive constraints (ambiguity)
+ * - Contradictory persona traits (contradiction)
+ */
+export function detectConflicts(profile: ContextProfile): ConstraintConflict[] {
+  const conflicts: ConstraintConflict[] = [];
+
+  const allowedConstraints = profile.constraints.filter(
+    (c) => c.type === 'topic_boundary' && c.description.startsWith('Allowed'),
+  );
+  const restrictedConstraints = profile.constraints.filter(
+    (c) => c.type === 'topic_boundary' && c.description.startsWith('Restricted'),
+  );
+  const personaConstraints = profile.constraints.filter((c) => c.type === 'persona_rule');
+  const roleConstraint = profile.constraints.find((c) => c.type === 'role_constraint');
+
+  // 1. Allowed vs restricted topic keyword overlap
+  for (const allowed of allowedConstraints) {
+    for (const restricted of restrictedConstraints) {
+      const overlap = allowed.keywords.filter((k) => restricted.keywords.includes(k));
+      if (overlap.length > 0) {
+        conflicts.push({
+          constraintA: allowed,
+          constraintB: restricted,
+          conflictType: 'contradiction',
+          description: `Allowed topic "${allowed.description}" overlaps with restricted topic "${restricted.description}" on keywords: ${overlap.join(', ')}`,
+        });
+      }
+    }
+  }
+
+  // 2. Expansive role vs restrictive constraints
+  if (roleConstraint && (restrictedConstraints.length > 0 || profile.forbiddenActions.length > 0)) {
+    const roleText = roleConstraint.description.toLowerCase();
+    const isExpansive = EXPANSIVE_ROLE_INDICATORS.some((ind) => roleText.includes(ind));
+    if (isExpansive) {
+      const restrictive = restrictedConstraints[0] || profile.constraints.find((c) => c.type === 'action_restriction');
+      if (restrictive) {
+        conflicts.push({
+          constraintA: roleConstraint,
+          constraintB: restrictive,
+          conflictType: 'ambiguity',
+          description: `Expansive role "${roleConstraint.description}" may conflict with restrictive constraint "${restrictive.description}"`,
+        });
+      }
+    }
+  }
+
+  // 3. Contradictory persona traits
+  for (let i = 0; i < personaConstraints.length; i++) {
+    for (let j = i + 1; j < personaConstraints.length; j++) {
+      const traitA = personaConstraints[i].keywords[0]?.toLowerCase();
+      const traitB = personaConstraints[j].keywords[0]?.toLowerCase();
+      if (!traitA || !traitB) continue;
+
+      const isContradictory = CONTRADICTORY_PERSONA_PAIRS.some(
+        ([a, b]) => (traitA === a && traitB === b) || (traitA === b && traitB === a),
+      );
+      if (isContradictory) {
+        conflicts.push({
+          constraintA: personaConstraints[i],
+          constraintB: personaConstraints[j],
+          conflictType: 'contradiction',
+          description: `Persona trait "${traitA}" contradicts "${traitB}"`,
+        });
+      }
+    }
+  }
+
+  return conflicts;
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────

@@ -22,6 +22,7 @@ import { scanChainOfThought, extractReasoningText, type ChainOfThoughtViolation 
 import { resolveSecurityOptions } from './internal/presets';
 import { extractContext, extractContextWithProviders, type ContextProfile } from './internal/context-engine';
 import { judgeResponse, mergeJudgments, type ResponseJudgment } from './internal/response-judge';
+import { auditPrompt as auditPromptFn } from './internal/prompt-audit';
 import { runRedTeam } from './redteam/runner';
 import type { RedTeamOptions, RedTeamReport } from './redteam/types';
 import { PromptInjectionError, CostLimitError, ContentViolationError, ModelPolicyError, OutputSchemaError, StreamAbortError, JailbreakError, TopicViolationError, ToolGuardError, ChainOfThoughtError, ResponseBoundaryError } from './errors';
@@ -547,6 +548,7 @@ export class LaunchPromptly {
                               injectionResult = detectInjection(userMessages, {
                                 blockThreshold: security.injection?.blockThreshold,
                                 systemPrompt: systemPromptText || undefined,
+                                contextProfile: security.contextEngine?.enhanceInjection !== false ? contextProfile ?? undefined : undefined,
                               });
 
                               // Merge with ML providers (cascade: skip ML when regex is confident)
@@ -1580,6 +1582,22 @@ export class LaunchPromptly {
     } catch {
       // Swallow — feedback is fire-and-forget
     }
+  }
+
+  /**
+   * Audit a system prompt for security weaknesses, conflicts, and attack surface.
+   * Returns a comprehensive report with robustness score (0-100) and actionable suggestions.
+   * Fully local — no LLM call needed.
+   *
+   * @example
+   * ```ts
+   * const report = lp.auditPrompt('You are a helpful assistant.');
+   * console.log(report.robustnessScore); // 15
+   * console.log(report.suggestions);     // [{dimension: 'injection_resistance', ...}]
+   * ```
+   */
+  auditPrompt(systemPrompt: string): import('./internal/prompt-audit').PromptAuditReport {
+    return auditPromptFn(systemPrompt);
   }
 
   /**

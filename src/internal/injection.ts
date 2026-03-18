@@ -17,6 +17,8 @@ export interface InjectionOptions {
   blockThreshold?: number;
   /** System prompt text — used to suppress role_manipulation matches consistent with the system prompt. */
   systemPrompt?: string;
+  /** Context profile from L3 — enables context-aware score adjustment. */
+  contextProfile?: import('./context-engine').ContextProfile;
 }
 
 /** Provider interface for pluggable injection detectors (e.g., ML plugin). */
@@ -259,6 +261,73 @@ function isConsistentWithSystem(text: string, matchIndex: number, matchLength: n
   return false;
 }
 
+// ── Context-aware adjustment ────────────────────────────────────────────
+
+/** Directive phrases that indicate the user is trying to instruct the model. */
+const DIRECTIVE_PATTERNS = [
+  /\b(?:discuss|talk\s+about|tell\s+me\s+about|explain|help\s+(?:me\s+)?with|switch\s+to|let'?s\s+(?:talk|discuss|move\s+on\s+to))\b/i,
+  /\b(?:ignore|forget|disregard|override|change|update)\s+(?:your|the|that|those)\b/i,
+];
+
+/**
+ * Adjust injection score based on L3 context profile.
+ *
+ * - Suppress: If user mentions a role consistent with the system prompt role, reduce score.
+ * - Boost: If user tries to discuss restricted topics in a directive context.
+ * - Boost: If user tries to instruct actions that contradict forbidden actions.
+ */
+function adjustWithContext(
+  score: number,
+  triggered: string[],
+  text: string,
+  profile: import('./context-engine').ContextProfile,
+): { score: number; triggered: string[] } {
+  const lowerText = text.toLowerCase();
+  let adjustedScore = score;
+  const adjustedTriggered = [...triggered];
+
+  // Suppress: role_manipulation when user mentions system prompt's own role
+  if (triggered.includes('role_manipulation') && profile.role) {
+    const roleWords = profile.role.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+    const matchCount = roleWords.filter((w) => lowerText.includes(w)).length;
+    if (roleWords.length > 0 && matchCount / roleWords.length >= 0.5) {
+      // Likely benign — user is referencing the actual role
+      adjustedScore = Math.max(0, adjustedScore - 0.3);
+    }
+  }
+
+  // Boost: user tries to discuss restricted topics in a directive way
+  const isDirective = DIRECTIVE_PATTERNS.some((p) => p.test(text));
+  if (isDirective) {
+    for (const topic of profile.restrictedTopics) {
+      const topicWords = topic.split(/\s+/).filter((w) => w.length > 2);
+      if (topicWords.length > 0 && topicWords.some((w) => lowerText.includes(w))) {
+        adjustedScore = Math.min(1.0, adjustedScore + 0.15);
+        if (!adjustedTriggered.includes('context_override')) {
+          adjustedTriggered.push('context_override');
+        }
+        break;
+      }
+    }
+  }
+
+  // Boost: user tries to instruct the model to do a forbidden action
+  for (const action of profile.forbiddenActions) {
+    const actionWords = action.split(/\s+/).filter((w) => w.length > 2);
+    if (actionWords.length === 0) continue;
+    const matchCount = actionWords.filter((w) => lowerText.includes(w)).length;
+    if (matchCount / actionWords.length >= 0.5 && isDirective) {
+      adjustedScore = Math.min(1.0, adjustedScore + 0.2);
+      if (!adjustedTriggered.includes('constraint_override')) {
+        adjustedTriggered.push('constraint_override');
+      }
+      break;
+    }
+  }
+
+  return { score: adjustedScore, triggered: adjustedTriggered };
+}
+
 // ── Detection ───────────────────────────────────────────────────────────────
 
 /** Maximum text length for injection scanning to prevent DoS. */
@@ -320,7 +389,16 @@ export function detectInjection(
   }
 
   // Cap at 1.0
-  const riskScore = Math.min(totalScore, 1.0);
+  let riskScore = Math.min(totalScore, 1.0);
+
+  // Apply context-aware adjustment if L3 profile is available
+  if (options?.contextProfile) {
+    const adjusted = adjustWithContext(riskScore, triggered, scanText, options.contextProfile);
+    riskScore = adjusted.score;
+    // Replace triggered with adjusted (may add context_override / constraint_override)
+    triggered.length = 0;
+    triggered.push(...adjusted.triggered);
+  }
 
   // Round to 2 decimal places for clean output
   const roundedScore = Math.round(riskScore * 100) / 100;

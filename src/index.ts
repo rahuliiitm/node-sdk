@@ -138,11 +138,12 @@ export type {
 } from './internal/cot-guard';
 
 // Context engine
-export { extractContext, extractContextWithProviders, clearContextCache } from './internal/context-engine';
+export { extractContext, extractContextWithProviders, clearContextCache, detectConflicts } from './internal/context-engine';
 export type {
   ContextProfile,
   Constraint,
   ConstraintType,
+  ConstraintConflict,
   GroundingMode,
   ContextEngineOptions,
   ContextExtractorProvider,
@@ -159,6 +160,15 @@ export type {
   ResponseJudgeProvider,
   ResponseJudgeSecurityOptions,
 } from './internal/response-judge';
+
+// Prompt audit
+export { auditPrompt } from './internal/prompt-audit';
+export type {
+  PromptAuditReport,
+  PromptWeakness,
+  AttackSurfaceEntry,
+  PromptSuggestion,
+} from './internal/prompt-audit';
 
 // Conversation guard
 export { ConversationGuard } from './internal/conversation-guard';
@@ -228,7 +238,7 @@ export type {
 } from './providers/gemini';
 
 // Red team engine
-export { getBuiltInAttacks, BUILT_IN_ATTACKS, analyzeAttackResult } from './redteam';
+export { getBuiltInAttacks, BUILT_IN_ATTACKS, analyzeAttackResult, generateContextualAttacks, createBaseline, compareReports } from './redteam';
 export type {
   AttackCategory,
   AttackPayload,
@@ -239,6 +249,9 @@ export type {
   RedTeamReport,
   CategoryScore,
   Vulnerability,
+  RedTeamBaseline,
+  RegressionReport,
+  CategoryRegression,
 } from './redteam';
 
 // Backward-compatible alias

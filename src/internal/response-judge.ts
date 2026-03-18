@@ -411,6 +411,74 @@ function checkPersonaBreaks(
   return violations;
 }
 
+function checkRoleDeviation(
+  tokens: string[],
+  lowerText: string,
+  profile: ContextProfile,
+): BoundaryViolation[] {
+  if (!profile.role) return [];
+
+  const violations: BoundaryViolation[] = [];
+  const roleConstraint = profile.constraints.find((c) => c.type === 'role_constraint');
+  if (!roleConstraint) return [];
+
+  const roleKeywords = roleConstraint.keywords;
+
+  // Check 1: Response claims a different identity
+  const IDENTITY_PATTERNS: RegExp[] = [
+    /i am (?:a|an|the)\s+(\w[\w\s]{2,30})/i,
+    /as (?:a|an|the)\s+(\w[\w\s]{2,30})/i,
+    /my role is\s+(\w[\w\s]{2,30})/i,
+  ];
+
+  for (const pattern of IDENTITY_PATTERNS) {
+    const match = pattern.exec(lowerText);
+    if (match && match[1]) {
+      const claimedRole = match[1].trim().toLowerCase();
+      const claimedTokens = claimedRole.split(/\s+/).filter((t) => t.length > 2);
+      // Check if claimed role overlaps with actual role
+      const hasOverlap = claimedTokens.some((t) => roleKeywords.includes(t));
+      if (!hasOverlap && claimedTokens.length > 0) {
+        violations.push({
+          type: 'role_deviation',
+          constraint: roleConstraint,
+          confidence: 0.8,
+          evidence: extractEvidence(lowerText, match[0]),
+        });
+        break; // One identity deviation is enough
+      }
+    }
+  }
+
+  // Check 2: Response explicitly breaks character (only for non-generic roles)
+  const GENERIC_ROLES = ['assistant', 'helper', 'bot', 'chatbot', 'model', 'language model'];
+  const isGenericRole = GENERIC_ROLES.some((g) => profile.role!.includes(g));
+
+  if (!isGenericRole) {
+    const BREAK_PATTERNS: RegExp[] = [
+      /as an ai(?:\s+(?:language\s+)?model)?/i,
+      /as a language model/i,
+      /i(?:'m|'m| am) just an ai/i,
+      /i don'?t actually have/i,
+      /i(?:'m|'m| am) not really a/i,
+    ];
+    for (const pattern of BREAK_PATTERNS) {
+      const match = pattern.exec(lowerText);
+      if (match) {
+        violations.push({
+          type: 'role_deviation',
+          constraint: roleConstraint,
+          confidence: 0.75,
+          evidence: extractEvidence(lowerText, match[0]),
+        });
+        break;
+      }
+    }
+  }
+
+  return violations;
+}
+
 // ── Scoring ──────────────────────────────────────────────────────────────────
 
 function computeComplianceScore(violations: BoundaryViolation[], constraintCount: number): number {
@@ -487,16 +555,19 @@ export function judgeResponse(
   // 1. Topic violations
   violations.push(...checkTopicViolations(tokens, lowerText, profile));
 
-  // 2. Forbidden actions
+  // 2. Role deviation
+  violations.push(...checkRoleDeviation(tokens, lowerText, profile));
+
+  // 3. Forbidden actions
   violations.push(...checkForbiddenActions(lowerText, profile));
 
-  // 3. Format compliance
+  // 4. Format compliance
   violations.push(...checkFormatCompliance(responseText, profile));
 
-  // 4. Grounding violations
+  // 5. Grounding violations
   violations.push(...checkGroundingViolations(lowerText, profile));
 
-  // 5. Persona breaks
+  // 6. Persona breaks
   violations.push(...checkPersonaBreaks(lowerText, profile));
 
   const complianceScore = computeComplianceScore(violations, profile.constraints.length);

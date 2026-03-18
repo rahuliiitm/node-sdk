@@ -15,6 +15,8 @@ import type {
 import { BUILT_IN_ATTACKS, getBuiltInAttacks, injectSystemPrompt } from './attacks';
 import { analyzeAttackResult } from './analyzer';
 import { generateReport } from './reporter';
+import { generateContextualAttacks } from './contextual-attacks';
+import { extractContext } from '../internal/context-engine';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -198,6 +200,14 @@ export async function runRedTeam(
     ...getBuiltInAttacks(categories),
     ...customAttacks,
   ];
+
+  // 1b. Generate contextual attacks from system prompt
+  const enableContextual = options.contextualAttacks !== false && systemPrompt;
+  if (enableContextual) {
+    const profile = extractContext(systemPrompt);
+    const contextual = generateContextualAttacks(profile);
+    attacks.push(...contextual);
+  }
 
   // 2. Inject system prompt into prompt_leakage attacks
   if (systemPrompt) {

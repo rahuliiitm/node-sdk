@@ -101,6 +101,8 @@ export interface RedTeamOptions {
   model?: string;
   /** Validate without making LLM calls. */
   dryRun?: boolean;
+  /** Generate context-aware attacks from system prompt. Default: true if systemPrompt provided. */
+  contextualAttacks?: boolean;
 }
 
 // ── Report ───────────────────────────────────────────────────────────────────
