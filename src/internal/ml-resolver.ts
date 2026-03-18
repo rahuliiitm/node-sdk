@@ -24,6 +24,7 @@ const GUARDRAIL_ALIASES: Record<string, MLGuardrailType> = {
   hallucination: 'hallucination',
   nliJudge: 'nliJudge',
   contextEngine: 'contextEngine',
+  attackClassifier: 'attackClassifier',
 };
 
 const ALL_ML_GUARDRAILS: MLGuardrailType[] = [
@@ -34,6 +35,7 @@ const ALL_ML_GUARDRAILS: MLGuardrailType[] = [
   'hallucination',
   'nliJudge',
   'contextEngine',
+  'attackClassifier',
 ];
 
 export interface ResolvedMLProviders {
@@ -44,6 +46,7 @@ export interface ResolvedMLProviders {
   hallucination?: HallucinationDetectorProvider;
   nliJudge?: ResponseJudgeProvider;
   contextEngine?: ContextExtractorProvider;
+  attackClassifier?: InjectionDetectorProvider;
 }
 
 /**
@@ -156,6 +159,14 @@ export async function createMLProviders(
       }),
     });
   }
+  if (guardrails.has('attackClassifier')) {
+    tasks.push({
+      name: 'attackClassifier',
+      task: import('../ml/attack-classifier').then(async ({ MLAttackClassifier }) => {
+        result.attackClassifier = await MLAttackClassifier.create();
+      }),
+    });
+  }
 
   // Load independently — one model failure doesn't block the others
   const outcomes = await Promise.allSettled(tasks.map((t) => t.task));
@@ -220,6 +231,12 @@ export function mergeMLProviders(
     merged.contextEngine = {
       ...merged.contextEngine,
       providers: [...(merged.contextEngine?.providers ?? []), mlProviders.contextEngine],
+    };
+  }
+  if (mlProviders.attackClassifier) {
+    merged.injection = {
+      ...merged.injection,
+      providers: [...(merged.injection?.providers ?? []), mlProviders.attackClassifier],
     };
   }
 

@@ -109,6 +109,15 @@ const MODEL_REGISTRY: Record<string, ModelEntry> = {
       'config.json',
     ],
   },
+  'launchpromptly/attack-classifier-v1': {
+    onnxFile: 'onnx/model.onnx',
+    quantizedFile: 'onnx/model_quantized.onnx',
+    files: [
+      'tokenizer.json',
+      'tokenizer_config.json',
+      'config.json',
+    ],
+  },
 };
 
 /** Friendly name → model ID mapping for the CLI. */
@@ -119,6 +128,7 @@ export const MODEL_NAME_MAP: Record<string, string> = {
   ner: 'Xenova/bert-base-NER',
   embedding: 'Xenova/all-MiniLM-L6-v2',
   nli: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
+  'attack-classifier': 'launchpromptly/attack-classifier-v1',
 };
 
 /** Get list of all registered model IDs. */

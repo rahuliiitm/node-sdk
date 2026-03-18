@@ -60,6 +60,9 @@ export type { MLResponseJudgeOptions } from './nli-judge';
 export { MLContextExtractor } from './context-extractor';
 export type { MLContextExtractorOptions } from './context-extractor';
 
+export { MLAttackClassifier } from './attack-classifier';
+export type { MLAttackClassifierOptions, AttackClassification, AttackLabel } from './attack-classifier';
+
 export { loadAttackIndex, matchAgainstIndex, hasAttackMatch } from './attack-embeddings';
 export type { AttackEmbeddingIndex, AttackMatch, AttackCategory } from './attack-embeddings';
 

@@ -21,7 +21,7 @@ export interface WrapOptions {
 }
 
 /** Guardrail types that have ML provider implementations. */
-export type MLGuardrailType = 'injection' | 'jailbreak' | 'pii' | 'toxicity' | 'contentFilter' | 'hallucination' | 'nliJudge' | 'contextEngine';
+export type MLGuardrailType = 'injection' | 'jailbreak' | 'pii' | 'toxicity' | 'contentFilter' | 'hallucination' | 'nliJudge' | 'contextEngine' | 'attackClassifier';
 
 /** Security configuration for the wrap() pipeline. */
 export interface SecurityOptions {
