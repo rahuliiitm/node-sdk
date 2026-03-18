@@ -138,7 +138,7 @@ export type {
 } from './internal/cot-guard';
 
 // Context engine
-export { extractContext, clearContextCache } from './internal/context-engine';
+export { extractContext, extractContextWithProviders, clearContextCache } from './internal/context-engine';
 export type {
   ContextProfile,
   Constraint,

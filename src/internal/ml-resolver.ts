@@ -12,6 +12,7 @@ import type { PIIDetectorProvider } from './pii';
 import type { ContentFilterProvider } from './content-filter';
 import type { HallucinationDetectorProvider } from './hallucination';
 import type { ResponseJudgeProvider } from './response-judge';
+import type { ContextExtractorProvider } from './context-engine';
 
 /** Map of accepted guardrail names to canonical MLGuardrailType. */
 const GUARDRAIL_ALIASES: Record<string, MLGuardrailType> = {
@@ -22,6 +23,7 @@ const GUARDRAIL_ALIASES: Record<string, MLGuardrailType> = {
   contentFilter: 'toxicity', // alias
   hallucination: 'hallucination',
   nliJudge: 'nliJudge',
+  contextEngine: 'contextEngine',
 };
 
 const ALL_ML_GUARDRAILS: MLGuardrailType[] = [
@@ -31,6 +33,7 @@ const ALL_ML_GUARDRAILS: MLGuardrailType[] = [
   'toxicity',
   'hallucination',
   'nliJudge',
+  'contextEngine',
 ];
 
 export interface ResolvedMLProviders {
@@ -40,6 +43,7 @@ export interface ResolvedMLProviders {
   toxicity?: ContentFilterProvider;
   hallucination?: HallucinationDetectorProvider;
   nliJudge?: ResponseJudgeProvider;
+  contextEngine?: ContextExtractorProvider;
 }
 
 /**
@@ -144,6 +148,14 @@ export async function createMLProviders(
       }),
     });
   }
+  if (guardrails.has('contextEngine')) {
+    tasks.push({
+      name: 'contextEngine',
+      task: import('../ml/context-extractor').then(async ({ MLContextExtractor }) => {
+        result.contextEngine = await MLContextExtractor.create();
+      }),
+    });
+  }
 
   // Load independently — one model failure doesn't block the others
   const outcomes = await Promise.allSettled(tasks.map((t) => t.task));
@@ -202,6 +214,12 @@ export function mergeMLProviders(
     merged.responseJudge = {
       ...merged.responseJudge,
       providers: [...(merged.responseJudge?.providers ?? []), mlProviders.nliJudge],
+    };
+  }
+  if (mlProviders.contextEngine) {
+    merged.contextEngine = {
+      ...merged.contextEngine,
+      providers: [...(merged.contextEngine?.providers ?? []), mlProviders.contextEngine],
     };
   }
 

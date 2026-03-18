@@ -25,7 +25,7 @@ import { checkModelPolicy } from '../internal/model-policy';
 import { validateOutputSchema } from '../internal/schema-validator';
 import { PromptInjectionError, CostLimitError, ContentViolationError, ModelPolicyError, OutputSchemaError, ResponseBoundaryError } from '../errors';
 import { resolveSecurityOptions } from '../internal/presets';
-import { extractContext, type ContextProfile } from '../internal/context-engine';
+import { extractContext, extractContextWithProviders, type ContextProfile } from '../internal/context-engine';
 import { judgeResponse, mergeJudgments, type ResponseJudgment } from '../internal/response-judge';
 
 // ── Gemini Types ─────────────────────────────────────────────────────────────
@@ -383,9 +383,14 @@ export function wrapGeminiClient<T extends object>(
                   if (security.contextEngine?.enabled !== false && security.contextEngine) {
                     const prompt = security.contextEngine.systemPrompt ?? geminiSystemPrompt;
                     if (prompt) {
-                      contextProfile = extractContext(prompt, {
-                        cache: security.contextEngine.cacheProfiles !== false,
-                      });
+                      const cacheOpts = { cache: security.contextEngine.cacheProfiles !== false };
+                      if (security.contextEngine.providers?.length) {
+                        contextProfile = await extractContextWithProviders(
+                          prompt, security.contextEngine.providers, cacheOpts,
+                        );
+                      } else {
+                        contextProfile = extractContext(prompt, cacheOpts);
+                      }
                       emit?.('context.extracted', { profile: contextProfile });
                     }
                   }

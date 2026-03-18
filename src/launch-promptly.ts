@@ -20,7 +20,7 @@ import { detectPromptLeakage, type PromptLeakageResult } from './internal/prompt
 import { checkToolCalls, scanToolResult, type ToolGuardViolation, type ToolCallInfo } from './internal/tool-guard';
 import { scanChainOfThought, extractReasoningText, type ChainOfThoughtViolation } from './internal/cot-guard';
 import { resolveSecurityOptions } from './internal/presets';
-import { extractContext, type ContextProfile } from './internal/context-engine';
+import { extractContext, extractContextWithProviders, type ContextProfile } from './internal/context-engine';
 import { judgeResponse, mergeJudgments, type ResponseJudgment } from './internal/response-judge';
 import { runRedTeam } from './redteam/runner';
 import type { RedTeamOptions, RedTeamReport } from './redteam/types';
@@ -523,9 +523,14 @@ export class LaunchPromptly {
                           if (security.contextEngine?.enabled !== false && security.contextEngine) {
                             const prompt = security.contextEngine.systemPrompt ?? systemPromptText;
                             if (prompt) {
-                              contextProfile = extractContext(prompt, {
-                                cache: security.contextEngine.cacheProfiles !== false,
-                              });
+                              const cacheOpts = { cache: security.contextEngine.cacheProfiles !== false };
+                              if (security.contextEngine.providers?.length) {
+                                contextProfile = await extractContextWithProviders(
+                                  prompt, security.contextEngine.providers, cacheOpts,
+                                );
+                              } else {
+                                contextProfile = extractContext(prompt, cacheOpts);
+                              }
                               emit('context.extracted', { profile: contextProfile });
                             }
                           }

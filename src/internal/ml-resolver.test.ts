@@ -5,9 +5,9 @@ import type { SecurityOptions } from '../types';
 // ── resolveGuardrailList ────────────────────────────────────────────────────
 
 describe('resolveGuardrailList', () => {
-  it('should return all 6 guardrails when useML is true', () => {
+  it('should return all 7 guardrails when useML is true', () => {
     const result = resolveGuardrailList(true);
-    expect(result).toEqual(['injection', 'jailbreak', 'pii', 'toxicity', 'hallucination', 'nliJudge']);
+    expect(result).toEqual(['injection', 'jailbreak', 'pii', 'toxicity', 'hallucination', 'nliJudge', 'contextEngine']);
   });
 
   it('should return empty array when useML is false', () => {

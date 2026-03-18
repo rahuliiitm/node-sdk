@@ -57,6 +57,9 @@ export type { MLEmbeddingProviderOptions } from './embedding-provider';
 export { MLResponseJudge } from './nli-judge';
 export type { MLResponseJudgeOptions } from './nli-judge';
 
+export { MLContextExtractor } from './context-extractor';
+export type { MLContextExtractorOptions } from './context-extractor';
+
 export { loadAttackIndex, matchAgainstIndex, hasAttackMatch } from './attack-embeddings';
 export type { AttackEmbeddingIndex, AttackMatch, AttackCategory } from './attack-embeddings';
 

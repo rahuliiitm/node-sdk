@@ -21,7 +21,7 @@ export interface WrapOptions {
 }
 
 /** Guardrail types that have ML provider implementations. */
-export type MLGuardrailType = 'injection' | 'jailbreak' | 'pii' | 'toxicity' | 'contentFilter' | 'hallucination' | 'nliJudge';
+export type MLGuardrailType = 'injection' | 'jailbreak' | 'pii' | 'toxicity' | 'contentFilter' | 'hallucination' | 'nliJudge' | 'contextEngine';
 
 /** Security configuration for the wrap() pipeline. */
 export interface SecurityOptions {
@@ -36,7 +36,7 @@ export interface SecurityOptions {
    * - `false` (default) → regex/rule-based only
    * - `string[]` → enable ML only for listed guardrails
    *
-   * Valid names: 'injection', 'jailbreak', 'pii', 'toxicity' (alias: 'contentFilter'), 'hallucination', 'nliJudge'
+   * Valid names: 'injection', 'jailbreak', 'pii', 'toxicity' (alias: 'contentFilter'), 'hallucination', 'nliJudge', 'contextEngine'
    *
    * Requires: npm install @huggingface/transformers
    */

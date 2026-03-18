@@ -469,3 +469,87 @@ export function extractContext(systemPrompt: string, options?: ContextEngineOpti
 
   return profile;
 }
+
+/**
+ * Extract context using regex baseline + optional ML providers.
+ *
+ * Runs sync `extractContext()` for the regex baseline, then calls each
+ * provider's `extract()` in parallel. Results are merged: regex findings
+ * are preferred for explicitly matched patterns, ML findings fill gaps.
+ */
+export async function extractContextWithProviders(
+  systemPrompt: string,
+  providers: ContextExtractorProvider[],
+  options?: ContextEngineOptions,
+): Promise<ContextProfile> {
+  const regexProfile = extractContext(systemPrompt, options);
+  if (!providers.length) return regexProfile;
+
+  const mlProfiles = await Promise.all(
+    providers.map((p) => Promise.resolve(p.extract(systemPrompt))),
+  );
+
+  return mergeProfiles(regexProfile, mlProfiles);
+}
+
+/**
+ * Merge regex profile with ML provider profiles.
+ *
+ * Strategy:
+ * - Role/entity/outputFormat/groundingMode: prefer regex (explicit match), ML fallback
+ * - Topics/actions: union (deduplicated)
+ * - Constraints: merge all, dedup by source+type, keep higher confidence
+ */
+function mergeProfiles(
+  regexProfile: ContextProfile,
+  mlProfiles: ContextProfile[],
+): ContextProfile {
+  const merged = { ...regexProfile };
+
+  for (const ml of mlProfiles) {
+    // Scalars: regex wins if present, otherwise take ML
+    if (!merged.role && ml.role) merged.role = ml.role;
+    if (!merged.entity && ml.entity) merged.entity = ml.entity;
+    if (!merged.outputFormat && ml.outputFormat) merged.outputFormat = ml.outputFormat;
+    if (merged.groundingMode === 'any' && ml.groundingMode !== 'any') {
+      merged.groundingMode = ml.groundingMode;
+    }
+
+    // Topics: union with deduplication
+    for (const topic of ml.allowedTopics) {
+      if (!merged.allowedTopics.includes(topic)) {
+        merged.allowedTopics.push(topic);
+      }
+    }
+    for (const topic of ml.restrictedTopics) {
+      if (!merged.restrictedTopics.includes(topic)) {
+        merged.restrictedTopics.push(topic);
+      }
+    }
+
+    // Forbidden actions: union
+    for (const action of ml.forbiddenActions) {
+      if (!merged.forbiddenActions.includes(action)) {
+        merged.forbiddenActions.push(action);
+      }
+    }
+
+    // Constraints: merge by source+type, keep higher confidence
+    for (const mlConstraint of ml.constraints) {
+      const existing = merged.constraints.find(
+        (c) => c.type === mlConstraint.type && c.source === mlConstraint.source,
+      );
+      if (existing) {
+        if (mlConstraint.confidence > existing.confidence) {
+          existing.confidence = mlConstraint.confidence;
+          existing.description = mlConstraint.description;
+          existing.keywords = mlConstraint.keywords;
+        }
+      } else {
+        merged.constraints.push(mlConstraint);
+      }
+    }
+  }
+
+  return merged;
+}
